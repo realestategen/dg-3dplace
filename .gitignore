@@ -1,0 +1,71 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual Environments
+venv/
+env/
+ENV/
+.venv
+
+# Conda
+.conda/
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Input Videos (too large for git)
+room/data/**/*.mp4
+room/data/**/*.avi
+room/data/**/*.mov
+room/data/**/*.mkv
+*.mp4
+*.avi
+*.mov
+*.mkv
+
+# Input Images (can be hundreds of files)
+room/data/images/
+room/data/input/
+
+# 3D Gaussian Splatting Outputs (large checkpoint files)
+room/output/
+*.ply
+*.ckpt
+*.pth
+
+# COLMAP Outputs (large binary files)
+room/data/sparse/
+room/data/distorted/
+room/data/stereo/
+*.bin
+
+# Logs
+*.log
+logs/
+wandb/
+
+# Temporary files
+tmp/
+temp/
+.cache/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Keep directory structure with .gitkeep
+!room/output/.gitkeep
+!room/data/.gitkeep
+!room/data/images/.gitkeep
