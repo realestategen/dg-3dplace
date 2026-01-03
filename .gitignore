@@ -34,9 +34,13 @@ room/data/**/*.mkv
 *.avi
 *.mov
 *.mkv
+*.ini
+*.db
+transforms.json
 
 # Input Images (can be hundreds of files)
-room/data/images/
+room/data/images*/
+
 room/data/input/
 
 # 3D Gaussian Splatting Outputs (large checkpoint files)

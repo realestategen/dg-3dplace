@@ -7,8 +7,13 @@ Ensure Docker and NVIDIA Container Toolkit are installed (see [detailed setup](#
 
 ### Step 1: Extract Frames from Video
 ```bash
-# Extract frames at 2 FPS from your video
+# Create output directory with proper permissions
+mkdir -p room/data
+chmod -R 777 room/data
+
+# Extract frames at 2 FPS from your video (with GPU support for COLMAP)
 sudo docker run --rm \
+  --gpus all \
   -v $(pwd)/room:/workspace \
   nerfstudio/nerfstudio:latest \
   ns-process-data video \
@@ -20,6 +25,10 @@ This creates `room/data/images/` with extracted frames and runs COLMAP reconstru
 
 ### Step 2: Train 3D Gaussian Splatting Model
 ```bash
+# Create output directory with proper permissions
+mkdir -p room/output/my_scene
+chmod -R 777 room/output/my_scene
+
 # Train for 7000 iterations (~15 minutes on RTX 4070 Ti)
 sudo docker run --gpus all \
   -v $(pwd)/room:/workspace \
@@ -40,7 +49,7 @@ sudo docker run --rm -it \
   -v $(pwd)/room:/workspace \
   -p 7007:7007 \
   nerfstudio/nerfstudio:latest \
-  ns-viewer --load-config /workspace/output/my_scene/data/splatfacto/*/config.yml
+  ns-viewer --load-config /workspace/output/my_scene/data/splatfacto/2026-01-03_223700/config.yml
 ```
 Open your browser to **http://localhost:7007** to interact with the 3D scene.
 
