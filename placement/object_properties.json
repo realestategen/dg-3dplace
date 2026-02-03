@@ -1,0 +1,45 @@
+{
+  "detection_method": "YOLOv8_differential",
+  "vase": {
+    "class": "vase",
+    "class_id": 75,
+    "confidence": 0.6821075677871704
+  },
+  "bounding_box_aligned": {
+    "x1": 256.4513854980469,
+    "y1": 483.0706787109375,
+    "x2": 325.0097351074219,
+    "y2": 653.4566650390625,
+    "width": 68.558349609375,
+    "height": 170.385986328125,
+    "center_x": 290.7305603027344,
+    "center_y": 568.263671875,
+    "aspect_ratio": 0.402370810508728
+  },
+  "rotation": {
+    "estimated_degrees": 168.24842834472656
+  },
+  "scale": {
+    "relative_to_image": {
+      "width_fraction": 0.1269599050283432,
+      "height_fraction": 0.1774854063987732
+    },
+    "estimated_3d_size_meters": {
+      "height": 0.887427031993866,
+      "width": 0.6347995400428772,
+      "assumed_room_height": 5.0
+    },
+    "pixels": {
+      "width": 68.558349609375,
+      "height": 170.385986328125
+    }
+  },
+  "image_info": {
+    "size": [
+      540,
+      960
+    ],
+    "iou_threshold": 0.3,
+    "confidence_threshold": 0.25
+  }
+}
