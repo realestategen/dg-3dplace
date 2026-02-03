@@ -1,13 +1,45 @@
 #!/usr/bin/env python3
 """
-Simple script to inject vase.obj into the 3D Gaussian Splatting scene.
-Places vase at a fixed location and saves modified checkpoint for viewing.
+Inject vase.obj into 3D Gaussian Splatting scene using detected properties.
+Uses YOLO detection results to properly scale, rotate, and place the vase.
 """
 
 import numpy as np
 import torch
 import trimesh
 from pathlib import Path
+import json
+
+def rotation_matrix_to_quaternion(R):
+    """
+    Convert 3x3 rotation matrix to quaternion [w, x, y, z].
+    """
+    trace = np.trace(R)
+    if trace > 0:
+        s = 0.5 / np.sqrt(trace + 1.0)
+        w = 0.25 / s
+        x = (R[2, 1] - R[1, 2]) * s
+        y = (R[0, 2] - R[2, 0]) * s
+        z = (R[1, 0] - R[0, 1]) * s
+    elif R[0, 0] > R[1, 1] and R[0, 0] > R[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + R[0, 0] - R[1, 1] - R[2, 2])
+        w = (R[2, 1] - R[1, 2]) / s
+        x = 0.25 * s
+        y = (R[0, 1] + R[1, 0]) / s
+        z = (R[0, 2] + R[2, 0]) / s
+    elif R[1, 1] > R[2, 2]:
+        s = 2.0 * np.sqrt(1.0 + R[1, 1] - R[0, 0] - R[2, 2])
+        w = (R[0, 2] - R[2, 0]) / s
+        x = (R[0, 1] + R[1, 0]) / s
+        y = 0.25 * s
+        z = (R[1, 2] + R[2, 1]) / s
+    else:
+        s = 2.0 * np.sqrt(1.0 + R[2, 2] - R[0, 0] - R[1, 1])
+        w = (R[1, 0] - R[0, 1]) / s
+        x = (R[0, 2] + R[2, 0]) / s
+        y = (R[1, 2] + R[2, 1]) / s
+        z = 0.25 * s
+    return np.array([w, x, y, z])
 
 print("=" * 80)
 print("                  INJECT VASE INTO 3D SCENE")
@@ -17,34 +49,66 @@ print("=" * 80)
 # Input paths
 CHECKPOINT_PATH = Path("/home/cse_g2/RealEstateGen/DG-3DPlace/room/output/my_scene/data/splatfacto/2026-02-02_124835/nerfstudio_models/step-000006999.ckpt")
 MESH_PATH = Path("vase.obj")
+PLACEMENT_3D = Path("3d_placement.json")  # Camera-based 3D mapping
 
 # Output path - save in placement directory (easier permissions)
 OUTPUT_CHECKPOINT = Path("scene_with_vase.ckpt")
 
-# Vase placement - offset from scene center, on the floor
-VASE_POSITION = None  # Will be calculated from scene
-OFFSET_FROM_CENTER = np.array([0.5, 0.0, 0.0])  # Slightly to the side
+# Vase appearance - VISIBLE but not huge
+NUM_POINTS = 200000       # Much higher density for exact replica (4x increase)
+GAUSSIAN_SCALE = 0.01     # Moderate Gaussian size
+USE_MESH_COLORS = False   # Use red color for visibility
+VASE_OPACITY = 1.0        # Full opacity
 
-# Vase appearance - EXACT REPLICA
-NUM_POINTS = 50000        # High density for detail
-VASE_SCALE = 0.008        # Much smaller scale
-GAUSSIAN_SCALE = 0.002    # Small tight Gaussians for detail
-USE_MESH_COLORS = True    # Extract actual colors from .obj
-VASE_OPACITY = 0.95       # Opacity
+# These will be loaded from 3D placement
+VASE_POSITION = None      # From camera unprojection
+VASE_SCALE = None         # From 3D dimensions
+VASE_ROTATION_INFO = None  # Rotation in 3D space
+
+# ==================== LOAD 3D PLACEMENT DATA ====================
+print(f"\n[STEP 0] Loading 3D Placement from Camera Unprojection")
+print("-" * 80)
+
+with open(PLACEMENT_3D, 'r') as f:
+    placement = json.load(f)
+
+# Extract 3D position from camera unprojection
+VASE_POSITION = np.array([
+    placement['position_3d']['x'],
+    placement['position_3d']['y'],
+    placement['position_3d']['z']
+])
+
+# Extract 3D dimensions
+detected_height_3d = placement['scale_3d']['height']
+detected_width_3d = placement['scale_3d']['width']
+
+# Extract rotation information
+VASE_ROTATION_INFO = placement['rotation']
+yolo_rotation_deg = VASE_ROTATION_INFO['yolo_degrees']
+cam_forward = np.array(VASE_ROTATION_INFO['camera_forward'])
+cam_right = np.array(VASE_ROTATION_INFO['camera_right'])
+cam_up = np.array(VASE_ROTATION_INFO['camera_up'])
+
+print(f"✓ Loaded 3D placement (camera-based unprojection):")
+print(f"  Position: [{VASE_POSITION[0]:.3f}, {VASE_POSITION[1]:.3f}, {VASE_POSITION[2]:.3f}]")
+print(f"  3D Height: {detected_height_3d:.3f} m")
+print(f"  3D Width: {detected_width_3d:.3f} m")
+print(f"  Rotation: {yolo_rotation_deg:.2f}° (in camera image plane)")
+print(f"  Camera forward: {cam_forward}")
 
 print(f"\n[CONFIG]")
 print(f"  Checkpoint: {CHECKPOINT_PATH}")
 print(f"  Mesh: {MESH_PATH}")
+print(f"  Placement: {PLACEMENT_3D} (camera-based)")
 print(f"  Output: {OUTPUT_CHECKPOINT}")
-print(f"  Vase Position: {VASE_POSITION}")
-print(f"  Vase Scale: {VASE_SCALE}")
 print(f"  Num Points: {NUM_POINTS}")
 
-# ==================== ANALYZE SCENE ====================
-print(f"\n[STEP 1] Analyzing Scene for Placement")
+# ==================== VERIFY SCENE BOUNDS ====================
+print(f"\n[STEP 1] Verifying Scene Bounds")
 print("-" * 80)
 
-# Load scene first to calculate proper placement
+# Load scene to verify bounds
 checkpoint_temp = torch.load(str(CHECKPOINT_PATH), map_location='cpu', weights_only=False)
 state_dict_temp = checkpoint_temp['pipeline']
 if '_model.means' in state_dict_temp:
@@ -52,18 +116,17 @@ if '_model.means' in state_dict_temp:
 else:
     scene_means_np = state_dict_temp['means'].numpy()
 
-# Calculate floor position (low Z percentile) and centered XY
-floor_z = np.percentile(scene_means_np[:, 2], 5)
-center_x = scene_means_np[:, 0].mean()
-center_y = scene_means_np[:, 1].mean()
+# Show scene bounds for reference
+x_min, x_max = scene_means_np[:, 0].min(), scene_means_np[:, 0].max()
+y_min, y_max = scene_means_np[:, 1].min(), scene_means_np[:, 1].max()
+z_min, z_max = scene_means_np[:, 2].min(), scene_means_np[:, 2].max()
 
-VASE_POSITION = np.array([center_x, center_y, floor_z]) + OFFSET_FROM_CENTER
 print(f"✓ Scene bounds:")
-print(f"    X: [{scene_means_np[:, 0].min():.2f}, {scene_means_np[:, 0].max():.2f}]")
-print(f"    Y: [{scene_means_np[:, 1].min():.2f}, {scene_means_np[:, 1].max():.2f}]")
-print(f"    Z: [{scene_means_np[:, 2].min():.2f}, {scene_means_np[:, 2].max():.2f}]")
+print(f"    X: [{x_min:.2f}, {x_max:.2f}]")
+print(f"    Y: [{y_min:.2f}, {y_max:.2f}]")
+print(f"    Z: [{z_min:.2f}, {z_max:.2f}]")
 print(f"✓ Vase will be placed at: {VASE_POSITION}")
-print(f"  (Floor level, slightly offset from center)")
+print(f"  (From camera-based 3D unprojection)")
 
 # ==================== LOAD MESH ====================
 print(f"\n[STEP 2] Loading Vase Mesh with Colors")
@@ -78,10 +141,19 @@ has_texture = mesh.visual.kind == 'texture'
 print(f"  Vertex colors: {has_vertex_colors}")
 print(f"  Texture: {has_texture}")
 
-# Center and scale mesh
+# Center mesh
 mesh.vertices -= mesh.vertices.mean(axis=0)
+
+# Calculate scale - use 3D height from camera unprojection
+mesh_height = mesh.bounds[1][2] - mesh.bounds[0][2]  # Z dimension
+VASE_SCALE = detected_height_3d / mesh_height
+print(f"✓ Mesh height in obj units: {mesh_height:.2f}")
+print(f"✓ Target height from 3D unprojection: {detected_height_3d:.3f} m")
+print(f"✓ Calculated scale factor: {VASE_SCALE:.6f}")
+
+# Apply scale
 mesh.vertices *= VASE_SCALE
-print(f"✓ Centered and scaled by {VASE_SCALE}x")
+print(f"✓ Scaled mesh to match detected size")
 print(f"  Mesh bounds: {mesh.bounds}")
 
 # ==================== SAMPLE POINTS ====================
@@ -113,9 +185,33 @@ if USE_MESH_COLORS and (has_vertex_colors or has_texture):
     print(f"✓ Extracted colors for {len(colors)} points")
     print(f"  Color range: [{colors.min():.3f}, {colors.max():.3f}]")
 else:
-    # Fallback: use a neutral terracotta/clay color
-    print(f"⚠ No colors in mesh, using default terracotta color")
-    colors = np.tile([0.8, 0.6, 0.4], (len(points), 1))
+    # Use bright red for visibility
+    print(f"✓ Using bright red color for visibility")
+    colors = np.tile([1.0, 0.0, 0.0], (len(points), 1))  # Pure red
+
+# Apply rotation based on camera orientation
+print(f"\\n[STEP 3.5] Applying Rotation in Camera Space")
+print("-" * 80)
+
+# The YOLO rotation is in the image plane, which corresponds to rotation around the camera's forward axis
+# We need to construct a rotation matrix that rotates around the camera forward vector
+
+rotation_rad = np.radians(yolo_rotation_deg)
+
+# Create rotation matrix around camera forward axis
+# Using Rodrigues' rotation formula
+k = cam_forward / np.linalg.norm(cam_forward)  # Unit vector
+K = np.array([
+    [0, -k[2], k[1]],
+    [k[2], 0, -k[0]],
+    [-k[1], k[0], 0]
+])
+
+rotation_matrix = np.eye(3) + np.sin(rotation_rad) * K + (1 - np.cos(rotation_rad)) * (K @ K)
+
+points = points @ rotation_matrix.T
+print(f"✓ Rotated points by {yolo_rotation_deg:.2f}° around camera forward axis")
+print(f"  Camera forward: {cam_forward}")
 
 # Translate points to target position
 points += VASE_POSITION
@@ -136,9 +232,11 @@ means = torch.from_numpy(points).float()
 # Scales (log space) - small for detail
 scales = torch.full((num_vase, 3), np.log(GAUSSIAN_SCALE), dtype=torch.float32)
 
-# Rotations (identity quaternions: w=1, x=y=z=0)
+# Rotations - convert rotation matrix to quaternions for each Gaussian
+# We apply the same rotation to all Gaussians
+rotation_quat = rotation_matrix_to_quaternion(rotation_matrix)
 quats = torch.zeros((num_vase, 4), dtype=torch.float32)
-quats[:, 0] = 1.0
+quats[:, :] = torch.from_numpy(rotation_quat).float()
 
 # Colors (spherical harmonics DC term) - USE ACTUAL MESH COLORS
 # SH DC formula: (color - 0.5) / 0.28209479177387814
@@ -151,7 +249,10 @@ features_rest = torch.zeros((num_vase, 15, 3), dtype=torch.float32)
 
 # Opacities (inverse sigmoid space)
 opacity_value = VASE_OPACITY
-opacity_logit = np.log(opacity_value / (1 - opacity_value))
+if opacity_value >= 0.9999:
+    opacity_logit = 10.0  # Very high value for near-1.0 opacity
+else:
+    opacity_logit = np.log(opacity_value / (1 - opacity_value))
 opacities = torch.full((num_vase, 1), opacity_logit, dtype=torch.float32)
 
 print(f"✓ Created {num_vase} Gaussians:")
