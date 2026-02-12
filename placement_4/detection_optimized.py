@@ -457,7 +457,8 @@ def add_object_to_scene(object_image_path, object_obj_path):
     print(f"OBJ center: {obj_center}, min: {obj_min}, max: {obj_max}")
     points -= obj_center
     pts_scene = np.column_stack([points[:, 0], -points[:, 2], points[:, 1]])
-    pts_scene *= scale / (obj_max - obj_min).max()
+    SCALE_FACTOR = 0.4
+    pts_scene *= (scale * SCALE_FACTOR) / (obj_max - obj_min).max()
     pts_scene += translation
     print(f"Object points after transform: min {pts_scene.min(axis=0)}, max {pts_scene.max(axis=0)}, mean {pts_scene.mean(axis=0)}")
     means_object = torch.tensor(pts_scene, dtype=torch.float32)
@@ -555,4 +556,4 @@ if __name__ == "__main__":
         
         
         
-# python view_room.py room_with_vase_final.ckpt --port 8080
+# python view_room.py /home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260213_004047/room_with_object.ckpt --port 8080
