@@ -19,11 +19,11 @@ from gsplat import rasterization
 import os
 import datetime
 
-CKPT_PATH = "room.ckpt"
+CKPT_PATH = "cupboard_room.ckpt"
 RENDER_W, RENDER_H = 1280, 720
-NUM_CAMERAS = 5
+NUM_CAMERAS = 15
 FOV_DEG = 60.0
-ORBIT_SCALE = 0.04          # fraction of scene extent for orbit radius
+ORBIT_SCALE = 0.055       # fraction of scene extent for orbit radius
 CAMERA_HEIGHT_OFFSET = 0.0  # keep horizontal view
 OPACITY_THRESHOLD = 0.1
 HEIGHT_TOLERANCE = 0.15      # for surface filtering
@@ -32,7 +32,7 @@ DEVICE = "cuda"
 C0 = 0.28209479177387814
 
 # Configurable object class for detection
-OBJECT_CLASSNAME = "chair"  # Change to "chair" or any other class as needed
+OBJECT_CLASSNAME = "vase"  # Change to "chair" or any other class as needed
 
 # Session folder for outputs
 SESSION_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
