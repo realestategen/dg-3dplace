@@ -1,0 +1,22 @@
+Detection Resource Report
+========================
+Status: Success
+
+| Stage | Time (s) |
+|---|---:|
+| YOLO detection | 0.56 |
+| Depth map rendering | 0.50 |
+| Keypoint extraction & unprojection | 0.01 |
+| Surface detection | 0.00 |
+| PnP pose estimation | 0.00 |
+| Depth filtering & placement | 0.01 |
+| Unprojection & 3D detection | 0.54 |
+| Highlighting & ckpt | 0.55 |
+| Vase integration | 0.16 |
+| Total | 3.52 |
+
+CPU user time (s): 4.44
+CPU system time (s): 0.50
+Memory usage (MB): 1121.86
+GPU: NVIDIA GeForce RTX 4070 Ti SUPER
+GPU memory used (MB): 44.10

@@ -1,0 +1,17 @@
+Detection Resource Report
+========================
+Status: Success
+
+| Stage | Time (s) |
+|---|---:|
+| YOLO detection | 0.36 |
+| Unprojection & 3D detection | 0.02 |
+| Highlighting & ckpt | 0.59 |
+| Vase integration | 0.20 |
+| Total | 2.18 |
+
+CPU user time (s): 3.38
+CPU system time (s): 0.42
+Memory usage (MB): 1064.26
+GPU: NVIDIA GeForce RTX 4070 Ti SUPER
+GPU memory used (MB): 12.10
