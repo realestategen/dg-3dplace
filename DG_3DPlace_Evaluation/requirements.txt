@@ -1,0 +1,6 @@
+torch
+torchvision
+transformers
+Pillow
+scikit-image
+opencv-python
