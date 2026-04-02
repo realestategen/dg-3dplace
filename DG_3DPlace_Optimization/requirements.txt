@@ -1,0 +1,12 @@
+# PyTorch (Note: It is usually better to install this directly via conda/pip to match your specific CUDA version)
+torch>=2.0.0
+torchvision>=0.15.0
+
+# Image and Math Operations
+numpy
+opencv-python
+
+# Perceptual Loss
+lpips
+
+# (IMPORTANT: diff-gaussian-rasterization is NOT a standard pip package. See commands below.)
