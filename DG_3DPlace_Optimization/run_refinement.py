@@ -7,7 +7,6 @@ import os
 from src.refiner.gaussian_io import load_and_split_scene, merge_and_save_scene
 from src.refiner.optimizer import PoseOptimizer
 from src.utils.loss_utils import RefinementLoss
-from src.utils.camera_utils import setup_camera_from_scout
 
 # Import standard 3DGS rasterizer
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
@@ -16,12 +15,12 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
     # 1. Data Loading
-    bg_gaussians, obj_gaussians = load_and_split_scene(ckpt_path, num_object_gaussians, device)
+    bg_gaussians, obj_gaussians, full_ckpt = load_and_split_scene(ckpt_path, num_object_gaussians, device)
     
     target_rgb = torch.tensor(cv2.imread(target_img_path)[..., ::-1].copy()).permute(2,0,1).float().to(device) / 255.0
     target_mask = torch.tensor(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE).copy()).unsqueeze(0).float().to(device) / 255.0
     
-    camera = setup_camera_from_scout(scout_camera_data)
+    camera = scout_camera_data
     
     # Background color for rasterization (usually black [0,0,0])
     bg_color = torch.tensor([0, 0, 0], dtype=torch.float32, device=device)
@@ -55,12 +54,21 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
         sh_degree = 3 if 'features_rest' in bg_gaussians else 0
         if 'features_dc' in bg_gaussians:
             combined_shs = torch.cat([bg_gaussians['features_dc'], transformed_obj['features_dc']], dim=0)
+            
+            # FIX: Nerfstudio saves DC features as 2D [N, 3]. Make it 3D [N, 1, 3]
+            if combined_shs.dim() == 2:
+                combined_shs = combined_shs.unsqueeze(1)
+                
             if sh_degree > 0:
                 combined_shs_rest = torch.cat([bg_gaussians['features_rest'], transformed_obj['features_rest']], dim=0)
                 combined_shs = torch.cat([combined_shs, combined_shs_rest], dim=1)
         else:
             combined_colors = torch.cat([bg_gaussians['colors'], transformed_obj['colors']], dim=0)
             combined_shs = None
+            
+        # FIX: Ensure opacities are exactly [N, 1] as expected by the rasterizer
+        if combined_opacities.dim() == 1:
+            combined_opacities = combined_opacities.unsqueeze(1)
 
         # 4. Rasterization Settings
         raster_settings = GaussianRasterizationSettings(
@@ -82,7 +90,7 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
         # 5. Render
         rendered_image, radii = rasterizer(
             means3D=combined_means,
-            means2D=torch.zeros_like(combined_means[:, :2], requires_grad=True, device=device),
+            means2D=torch.zeros_like(combined_means, requires_grad=True, device=device),
             shs=combined_shs,
             colors_precomp=combined_colors if combined_shs is None else None,
             opacities=combined_opacities,
@@ -99,7 +107,7 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
         
         rendered_mask_img, _ = rasterizer(
             means3D=combined_means.detach(), # Don't backprop through coordinates for the mask render
-            means2D=torch.zeros_like(combined_means[:, :2], device=device),
+            means2D=torch.zeros_like(combined_means, device=device),
             shs=None,
             colors_precomp=mask_colors,
             opacities=combined_opacities.detach(),
@@ -123,38 +131,66 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
     print("[*] Optimization complete. Saving...")
     with torch.no_grad():
         final_obj = pose_model.transform_object(obj_gaussians)
-        merge_and_save_scene(bg_gaussians, final_obj, output_path)
+        merge_and_save_scene(bg_gaussians, final_obj, full_ckpt, output_path)
 
 if __name__ == "__main__":
     import math
     import torch
+    import cv2
 
     print("[*] Script started. Setting up mock camera...")
     
-    # 1. Create a dummy camera just to let the rasterizer compile and run
+    # 1. Dynamically get the resolution of your target image
+    target_img_path = "data/inputs/diffusion_target.png"
+    test_img = cv2.imread(target_img_path)
+    if test_img is None:
+        raise FileNotFoundError(f"Could not load {target_img_path}")
+    
+    img_h, img_w = test_img.shape[:2]
+    print(f"[*] Target image resolution is {img_w}x{img_h}. Adjusting camera...")
+
+    # 2. Generate a mathematically valid perspective projection matrix
+    def get_mock_projection(znear=0.01, zfar=100.0, fov=math.pi/3.0):
+        tanHalfFov = math.tan(fov / 2)
+        P = torch.zeros(4, 4)
+        P[0, 0] = 1.0 / tanHalfFov
+        P[1, 1] = 1.0 / tanHalfFov
+        P[2, 2] = zfar / (zfar - znear)
+        P[3, 2] = 1.0
+        P[2, 3] = -(zfar * znear) / (zfar - znear)
+        return P
+
+    # 3. Create a dummy camera with dynamic resolution
     class MockCamera:
-        def __init__(self):
-            self.image_width = 512
-            self.image_height = 512
+        def __init__(self, w, h):
+            self.image_width = w
+            self.image_height = h
             self.FoVx = math.pi / 3.0
             self.FoVy = math.pi / 3.0
-            self.world_view_transform = torch.eye(4, device="cuda")
-            self.full_proj_transform = torch.eye(4, device="cuda")
-            self.camera_center = torch.tensor([0.0, 0.0, 0.0], device="cuda")
+            self.camera_center = torch.tensor([0.0, 0.0, -3.0], device="cuda")
             
-    dummy_camera = MockCamera()
+            self.world_view_transform = torch.tensor([
+                [1., 0., 0., 0.],
+                [0., 1., 0., 0.],
+                [0., 0., 1., 3.],
+                [0., 0., 0., 1.]
+            ], device="cuda")
+            
+            proj = get_mock_projection()
+            self.full_proj_transform = torch.matmul(self.world_view_transform.cpu(), proj).cuda()
+            
+    dummy_camera = MockCamera(img_w, img_h)
     
-    # 2. Execute the loop
-    # IMPORTANT: Change 'num_object_gaussians' to roughly the number of 
-    # points your 3D model has (e.g., if your .obj had 20,000 vertices, use 20000).
+    # 4. Execute the loop
     try:
         run_refinement(
             ckpt_path="data/inputs/scene_with_initial_object.ckpt",
-            target_img_path="data/inputs/diffusion_target.png",
+            target_img_path=target_img_path,
             mask_path="data/inputs/object_mask.png",
-            num_object_gaussians=20000,  # <-- Update this number!
-            scout_camera_data=dummy_camera,
+            num_object_gaussians=15000, 
+            scout_camera_data=dummy_camera, 
             output_path="data/outputs/scene_refined.ckpt"
         )
     except Exception as e:
-        print(f"[!] An error occurred: {e}")
+        import traceback
+        print(f"[!] An error occurred:\n{traceback.format_exc()}")
