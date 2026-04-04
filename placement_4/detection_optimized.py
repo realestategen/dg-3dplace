@@ -20,7 +20,21 @@ import psutil
 
 import os
 import datetime
+import importlib.util
 from gemini_image_gen import generate_diffusion_image_with_gemini
+
+
+def _load_generate_obj_from_prompt_image():
+    module_path = os.path.join(os.path.dirname(__file__), "2d_3d.py")
+    spec = importlib.util.spec_from_file_location("two_d_three_d", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.generate_obj_from_prompt_image
+
+
+generate_obj_from_prompt_image = _load_generate_obj_from_prompt_image()
 
 CKPT_PATH = "bench_park.ckpt"
 RENDER_W, RENDER_H = 1280, 720
@@ -37,6 +51,7 @@ C0 = 0.28209479177387814
 # Configurable object class for detection
 OBJECT_CLASSNAME = "car"  # Change to "chair" or any other class as needed
 GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-2.5-flash-image-preview")
+REQUIRE_GEMINI_CUTOUT = True
 
 # Session folder for outputs
 SESSION_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -562,7 +577,7 @@ def refine_mask_with_sam(image_path, coarse_mask, prompt_box=None):
 
 def add_object_to_scene(
     object_image_path,
-    object_obj_path,
+    object_obj_path=None,
     camera_state_path=CAMERA_STATE_PATH,
     detection_target=OBJECT_CLASSNAME,
 ):
@@ -623,6 +638,31 @@ def add_object_to_scene(
         f"class={object_det['class']}, query='{object_det.get('query', detection_target)}', "
         f"conf={object_det['confidence']:.2f}, bbox={object_det['bbox']}"
     )
+
+    # Generate OBJ automatically from detected bbox + prompt if path wasn't provided.
+    if not object_obj_path:
+        auto_obj_path = os.path.join(SESSION_DIR, "generated_object.obj")
+        try:
+            gen_result = generate_obj_from_prompt_image(
+                image_path=object_image_path,
+                prompt=detection_target,
+                output_obj_path=auto_obj_path,
+                bbox=object_det["bbox"],
+                session_dir=SESSION_DIR,
+                require_gemini_cutout=REQUIRE_GEMINI_CUTOUT,
+                api_key=api_key,
+            )
+            object_obj_path = gen_result["output_obj_path"]
+            print(f"Generated object OBJ: {object_obj_path}")
+            if gen_result.get("object_only_png_path"):
+                print(f"Saved object-only PNG: {gen_result['object_only_png_path']}")
+            if gen_result.get("gemini_object_cutout_path"):
+                print(f"Saved Gemini cutout PNG: {gen_result['gemini_object_cutout_path']}")
+            if gen_result.get("gemini_object_cleaned_path"):
+                print(f"Saved Gemini cleaned PNG: {gen_result['gemini_object_cleaned_path']}")
+        except Exception as e:
+            print(f"Failed to generate OBJ from detected image region: {e}")
+            return
 
     # Save bbox visualization
     img = Image.open(object_image_path)
@@ -958,24 +998,22 @@ if __name__ == "__main__":
     print("1) Generate candidate camera views")
     print("2) Choose one camera interactively")
     print("3) Save camera metadata (.pt) inside this session folder")
-    print("4) Generate diffusion-added image with Gemini API + continue with object OBJ in same runtime")
+    print("4) Generate diffusion-added image with Gemini API")
+    print("5) Detect object bbox and auto-generate OBJ via 2d_3d.py")
     print(f"Viewer command after completion: python view_room.py {OUTPUT_PATH} --port 8080")
 
     select_camera_and_render()
 
-    if len(sys.argv) == 3:
+    if len(sys.argv) == 2:
         object_prompt = sys.argv[1]
-        object_obj_path = sys.argv[2]
     else:
         object_prompt = input("Enter rich edit prompt (e.g. 'a red car near the bench'): ").strip()
-        object_obj_path = input("Enter object OBJ path: ").strip()
+    object_obj_path = None
 
     if not object_prompt:
         print("Edit prompt cannot be empty.")
         sys.exit(1)
-    if not os.path.exists(object_obj_path):
-        print(f"OBJ path does not exist: {object_obj_path}")
-        sys.exit(1)
+    print("No OBJ path provided, generating OBJ from prompt.")
 
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
     if not api_key:
