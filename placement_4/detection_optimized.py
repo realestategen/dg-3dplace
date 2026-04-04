@@ -1,5 +1,6 @@
 
 import math
+import re
 import torch
 import numpy as np
 from PIL import Image
@@ -396,42 +397,10 @@ def build_added_object_mask(base_image_path, edited_image_path, diff_threshold=0
     return mask.astype(bool), diff_map
 
 
-def detect_object_masks_with_yolo_seg(image_path, object_classname):
-    """Run YOLO segmentation and return candidate masks for the requested class."""
-    from ultralytics import YOLO
+def detect_prompt_box_with_owlv2(image_path, object_prompt, score_threshold=0.06):
+    """Text-guided detection with OWLv2 using full prompt + internal simplified variants.
 
-    model = YOLO("yolov8n-seg.pt")
-    results = model(image_path, verbose=False)
-
-    candidates = []
-    for res in results:
-        if res.masks is None or res.boxes is None:
-            continue
-
-        masks = res.masks.data.cpu().numpy() > 0.5
-        for i, box in enumerate(res.boxes):
-            cls_id = int(box.cls[0])
-            cls_name = model.names[cls_id]
-            if object_classname.lower() not in cls_name.lower():
-                continue
-
-            conf = float(box.conf[0])
-            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().tolist()
-            candidates.append(
-                {
-                    "class_name": cls_name,
-                    "confidence": conf,
-                    "bbox": (float(x1), float(y1), float(x2), float(y2)),
-                    "mask": masks[i],
-                }
-            )
-    return candidates
-
-
-def detect_prompt_box_with_owlv2(image_path, object_prompt, score_threshold=0.08):
-    """Optional text-guided detection with OWLv2.
-
-    Returns (x1, y1, x2, y2) in pixel space or None if unavailable/not found.
+    Returns dict with bbox/score/query or None if unavailable/not found.
     """
     try:
         from transformers import Owlv2Processor, Owlv2ForObjectDetection
@@ -447,7 +416,35 @@ def detect_prompt_box_with_owlv2(image_path, object_prompt, score_threshold=0.08
         device = "cuda" if torch.cuda.is_available() else "cpu"
         model.to(device)
 
-        text_queries = [[f"a photo of a {object_prompt}", object_prompt]]
+        prompt_raw = (object_prompt or "").strip()
+        prompt_l = prompt_raw.lower()
+
+        stop_words = {
+            "a", "an", "the", "on", "in", "at", "near", "next", "to", "of", "with",
+            "and", "or", "under", "over", "behind", "front", "left", "right",
+            "red", "blue", "green", "yellow", "white", "black", "brown", "gray",
+            "small", "large", "big",
+        }
+        known_targets = ["car", "bench", "vase", "laptop", "chair", "table", "sofa", "plant", "bottle"]
+
+        query_variants = []
+        for q in [prompt_raw, f"a photo of {prompt_raw}"]:
+            q = q.strip()
+            if q and q not in query_variants:
+                query_variants.append(q)
+
+        for obj in known_targets:
+            if re.search(rf"\b{obj}\b", prompt_l):
+                for q in [obj, f"a photo of a {obj}"]:
+                    if q not in query_variants:
+                        query_variants.append(q)
+
+        prompt_tokens = [t for t in re.split(r"[^a-z0-9]+", prompt_l) if len(t) >= 3 and t not in stop_words]
+        for tok in prompt_tokens[:3]:
+            if tok not in query_variants:
+                query_variants.append(tok)
+
+        text_queries = [query_variants]
         inputs = processor(text=text_queries, images=image, return_tensors="pt")
         inputs = {k: v.to(device) for k, v in inputs.items()}
 
@@ -462,12 +459,19 @@ def detect_prompt_box_with_owlv2(image_path, object_prompt, score_threshold=0.08
 
         scores = res0["scores"].detach().cpu().numpy()
         boxes = res0["boxes"].detach().cpu().numpy()
+        labels = res0["labels"].detach().cpu().numpy() if "labels" in res0 else np.zeros(len(scores), dtype=np.int64)
         best_idx = int(np.argmax(scores))
         if float(scores[best_idx]) < score_threshold:
             return None
 
         x1, y1, x2, y2 = boxes[best_idx]
-        return float(x1), float(y1), float(x2), float(y2)
+        label_idx = int(labels[best_idx]) if len(labels) > best_idx else 0
+        matched_query = query_variants[label_idx] if 0 <= label_idx < len(query_variants) else prompt_raw
+        return {
+            "bbox": (float(x1), float(y1), float(x2), float(y2)),
+            "score": float(scores[best_idx]),
+            "query": matched_query,
+        }
     except Exception:
         return None
 
@@ -560,12 +564,11 @@ def add_object_to_scene(
     object_image_path,
     object_obj_path,
     camera_state_path=CAMERA_STATE_PATH,
-    object_classname=OBJECT_CLASSNAME,
+    detection_target=OBJECT_CLASSNAME,
 ):
     import time
     timings = {}
     t_total_start = time.time()
-    from ultralytics import YOLO
     print("\n--- Object Detection & Highlighting ---")
     # Start timing and resource tracking
     t_start = time.time()
@@ -592,33 +595,33 @@ def add_object_to_scene(
     opacities_raw = state["_model.opacities"].numpy()
     opacities = (1 / (1 + np.exp(-opacities_raw))).squeeze()
 
-    # Detect object in edited image with YOLO bbox
-    t_yolo_start = time.time()
-    model = YOLO("yolov8n.pt")
-    results = model(object_image_path, verbose=False)
-    t_yolo_end = time.time()
-    timings['YOLO detection'] = t_yolo_end - t_yolo_start
-
     object_det = None
-    for r_res in results:
-        for box in r_res.boxes:
-            cls_id = int(box.cls[0])
-            cls_name = model.names[cls_id]
-            conf = float(box.conf[0])
-            if object_classname.lower() in cls_name.lower():
-                x1, y1, x2, y2 = box.xyxy[0].cpu().numpy()
-                object_det = {"class": cls_name, "confidence": conf, "bbox": (x1, y1, x2, y2)}
-                break
-        if object_det:
-            break
+    detection_target = (detection_target or "").strip()
+    detection_label = infer_detection_target_from_prompt(detection_target)
+
+    # OWLv2-only open-vocabulary detection from the rich prompt.
+    t_owl_start = time.time()
+    owl_det = detect_prompt_box_with_owlv2(object_image_path, detection_target, score_threshold=0.06)
+    t_owl_end = time.time()
+    timings['OWLv2 detection'] = t_owl_end - t_owl_start
+    if owl_det is not None:
+        x1, y1, x2, y2 = owl_det["bbox"]
+        object_det = {
+            "class": detection_label,
+            "confidence": float(owl_det["score"]),
+            "bbox": (x1, y1, x2, y2),
+            "source": "owlv2",
+            "query": owl_det.get("query", detection_target),
+        }
 
     if not object_det:
-        print(f"No {object_classname} detected in image.")
+        print(f"No object detected for rich prompt: '{detection_target}'.")
         return
 
     print(
-        f"{object_classname.capitalize()} detected: {object_det['class']} "
-        f"(conf={object_det['confidence']:.2f}), bbox={object_det['bbox']}"
+        f"Detected via {object_det.get('source', 'unknown')}: "
+        f"class={object_det['class']}, query='{object_det.get('query', detection_target)}', "
+        f"conf={object_det['confidence']:.2f}, bbox={object_det['bbox']}"
     )
 
     # Save bbox visualization
@@ -628,12 +631,12 @@ def add_object_to_scene(
     x1, y1, x2, y2 = object_det["bbox"]
     rect = patches.Rectangle((x1, y1), x2 - x1, y2 - y1, linewidth=3, edgecolor="lime", facecolor="none")
     ax.add_patch(rect)
-    ax.set_title(f"{object_classname.capitalize()} Detection: {object_det['bbox']}")
+    ax.set_title(f"{detection_label.capitalize()} Detection ({object_det.get('source', 'detector')}): {object_det['bbox']}")
     ax.axis("off")
     plt.tight_layout()
-    plt.savefig(os.path.join(SESSION_DIR, f"{object_classname}_detection_bbox.png"), dpi=150)
+    plt.savefig(os.path.join(SESSION_DIR, f"{detection_label}_detection_bbox.png"), dpi=150)
     plt.close()
-    print(f"Saved {object_classname}_detection_bbox.png in {SESSION_DIR}")
+    print(f"Saved {detection_label}_detection_bbox.png in {SESSION_DIR}")
 
     if not os.path.exists(camera_state_path):
         print(f"Camera state file not found: {camera_state_path}")
@@ -670,7 +673,7 @@ def add_object_to_scene(
     t_unproj_end = time.time()
     timings['Unprojection & 3D detection'] = t_unproj_end - t_unproj_start
     t_highlight_start = time.time()
-    print(f"Gaussians in {object_classname} bbox: {len(object_indices):,} / {len(means):,}")
+    print(f"Gaussians in {detection_label} bbox: {len(object_indices):,} / {len(means):,}")
 
     # 1. Save checkpoint with red-highlighted detected gaussians (for verification)
     C0 = 0.28209479177387814
@@ -682,8 +685,8 @@ def add_object_to_scene(
     else:
         features_dc_mod[object_indices, :] = red_sh
     state["_model.features_dc"] = torch.tensor(features_dc_mod)
-    torch.save(ckpt, os.path.join(SESSION_DIR, f"room_with_{object_classname}_highlighted.ckpt"))
-    print(f"Saved: room_with_{object_classname}_highlighted.ckpt (red highlight only) in {SESSION_DIR}")
+    torch.save(ckpt, os.path.join(SESSION_DIR, f"room_with_{detection_label}_highlighted.ckpt"))
+    print(f"Saved: room_with_{detection_label}_highlighted.ckpt (red highlight only) in {SESSION_DIR}")
 
     # Verification render
     features_dc_viz = features_dc.copy()
@@ -697,16 +700,16 @@ def add_object_to_scene(
     rendered_mod, _ = render_gaussians(
         means, scales, quats, features_dc_mod_viz, opacities_raw, cam
     )
-    Image.fromarray((rendered_mod * 255).astype(np.uint8)).save(os.path.join(SESSION_DIR, f"{object_classname}_highlighted_verification.png"))
-    print(f"Saved {object_classname}_highlighted_verification.png in {SESSION_DIR}")
+    Image.fromarray((rendered_mod * 255).astype(np.uint8)).save(os.path.join(SESSION_DIR, f"{detection_label}_highlighted_verification.png"))
+    print(f"Saved {detection_label}_highlighted_verification.png in {SESSION_DIR}")
     t_highlight_end = time.time()
     timings['Highlighting & ckpt'] = t_highlight_end - t_highlight_start
     t_vase_start = time.time()
 
     # 2. Add vase gaussians to the original checkpoint (no red highlight)
-    print(f"\n--- Generating and integrating {object_classname} gaussians from OBJ ---")
+    print(f"\n--- Generating and integrating {detection_label} gaussians from OBJ ---")
     if len(object_indices) == 0:
-        print(f"No gaussians detected for {object_classname} placement, skipping integration.")
+        print(f"No gaussians detected for {detection_label} placement, skipping integration.")
         # End timing and write report even if failed
         t_end = time.time()
         cpu_end = process.cpu_times()
@@ -717,7 +720,7 @@ def add_object_to_scene(
         report_path = os.path.join(SESSION_DIR, "detection_resource_report.txt")
         with open(report_path, "w") as f:
             f.write(f"Detection Resource Report\n========================\n")
-            f.write(f"Status: No gaussians detected for {object_classname}\n")
+            f.write(f"Status: No gaussians detected for {detection_label}\n")
             f.write(f"Elapsed time (s): {t_end - t_start:.2f}\n")
             f.write(f"CPU user time (s): {cpu_end.user - cpu_start.user:.2f}\n")
             f.write(f"CPU system time (s): {cpu_end.system - cpu_start.system:.2f}\n")
@@ -878,6 +881,30 @@ def add_object_to_scene(
             f.write(f"GPU memory used (MB): {(gpu_mem_end - gpu_mem_start) / 1024 / 1024:.2f}\n")
     print(f"Resource report saved to {report_path}")
 
+
+def infer_detection_target_from_prompt(object_prompt):
+    """Infer a compact detection keyword from a rich Gemini prompt."""
+    prompt_l = (object_prompt or "").lower()
+    known_targets = [
+        "car",
+        "bench",
+        "vase",
+        "laptop",
+        "chair",
+        "table",
+        "sofa",
+        "plant",
+        "bottle",
+    ]
+    for name in known_targets:
+        if re.search(rf"\b{name}\b", prompt_l):
+            return name
+
+    tokens = [t for t in re.split(r"[^a-z0-9]+", prompt_l) if len(t) >= 3]
+    if len(tokens) > 0:
+        return tokens[-1]
+    return OBJECT_CLASSNAME
+
 # ══════════════════════════════════════════════════════════════════════
 # Vase Gaussian Integration
 # ══════════════════════════════════════════════════════════════════════
@@ -915,8 +942,8 @@ This script is split into two main functions:
 
 2. add_object_to_scene():
     - Takes the selected camera view and the Gemini-edited image
-    - Uses YOLO to detect requested object in edited image
-    - Uses YOLO bounding box for 3D gaussian filtering
+    - Uses OWLv2 open-vocabulary detection with the same rich prompt used for Gemini
+    - Uses detected bounding box for 3D gaussian filtering
     - Unprojects bounding-box pixels to 3D, finds corresponding Gaussians in room.ckpt
     - Computes scale and rotation
     - Adds vase Gaussians to the scene and saves the new checkpoint
@@ -940,11 +967,11 @@ if __name__ == "__main__":
         object_prompt = sys.argv[1]
         object_obj_path = sys.argv[2]
     else:
-        object_prompt = input("Enter wanted object (e.g. car/chair/vase): ").strip()
+        object_prompt = input("Enter rich edit prompt (e.g. 'a red car near the bench'): ").strip()
         object_obj_path = input("Enter object OBJ path: ").strip()
 
     if not object_prompt:
-        print("Wanted object cannot be empty.")
+        print("Edit prompt cannot be empty.")
         sys.exit(1)
     if not os.path.exists(object_obj_path):
         print(f"OBJ path does not exist: {object_obj_path}")
