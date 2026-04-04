@@ -307,6 +307,255 @@ def select_camera_and_render():
 # ══════════════════════════════════════════════════════════════════════
 
 
+def _select_best_component(mask, prompt_box=None, min_area=120, max_area_frac=0.35):
+    """Keep the most likely object component and suppress spill/noise regions."""
+    from scipy import ndimage
+
+    if mask.sum() == 0:
+        return mask
+
+    h, w = mask.shape
+    total_px = h * w
+    labeled, num_labels = ndimage.label(mask)
+    if num_labels == 0:
+        return mask
+
+    best_label = None
+    best_score = -1e9
+    cx_box = cy_box = None
+    if prompt_box is not None:
+        x1, y1, x2, y2 = prompt_box
+        cx_box = 0.5 * (x1 + x2)
+        cy_box = 0.5 * (y1 + y2)
+
+    for label in range(1, num_labels + 1):
+        comp = labeled == label
+        area = int(comp.sum())
+        if area < min_area:
+            continue
+        if area > int(max_area_frac * total_px):
+            continue
+
+        ys, xs = np.where(comp)
+        if len(xs) == 0:
+            continue
+        cx = float(xs.mean())
+        cy = float(ys.mean())
+
+        score = float(area)
+        if prompt_box is not None:
+            bx1, by1, bx2, by2 = map(float, prompt_box)
+            overlap = (
+                (xs >= bx1) & (xs <= bx2) &
+                (ys >= by1) & (ys <= by2)
+            ).sum() / max(1, area)
+            dist = np.hypot(cx - cx_box, cy - cy_box)
+            score = score * (1.0 + 2.0 * overlap) - 0.8 * dist
+
+        if score > best_score:
+            best_score = score
+            best_label = label
+
+    if best_label is None:
+        return np.zeros_like(mask, dtype=bool)
+    return (labeled == best_label)
+
+
+def build_added_object_mask(base_image_path, edited_image_path, diff_threshold=0.05):
+    """Build a binary mask for pixels added or changed by Gemini.
+
+    Returns:
+        mask: bool array of shape (H, W)
+        diff_map: float array of per-pixel max-channel differences
+    """
+    from scipy import ndimage
+
+    base_img = np.asarray(Image.open(base_image_path).convert("RGB"), dtype=np.float32) / 255.0
+    edited_img = np.asarray(Image.open(edited_image_path).convert("RGB"), dtype=np.float32) / 255.0
+
+    if base_img.shape != edited_img.shape:
+        raise ValueError(
+            f"Image shapes must match for differencing. base={base_img.shape}, edited={edited_img.shape}"
+        )
+
+    abs_diff = np.abs(edited_img - base_img)
+    diff_map = abs_diff.max(axis=2)
+
+    # Use both absolute floor threshold and adaptive high-percentile gate.
+    adaptive_thr = max(diff_threshold, float(np.percentile(diff_map, 93)))
+    mask = diff_map > adaptive_thr
+
+    # Clean small isolated pixels and connect nearby regions.
+    structure = np.ones((3, 3), dtype=bool)
+    mask = ndimage.binary_opening(mask, structure=structure)
+    mask = ndimage.binary_closing(mask, structure=structure)
+    mask = ndimage.binary_fill_holes(mask)
+
+    mask = _select_best_component(mask, prompt_box=None, min_area=120, max_area_frac=0.35)
+
+    return mask.astype(bool), diff_map
+
+
+def detect_object_masks_with_yolo_seg(image_path, object_classname):
+    """Run YOLO segmentation and return candidate masks for the requested class."""
+    from ultralytics import YOLO
+
+    model = YOLO("yolov8n-seg.pt")
+    results = model(image_path, verbose=False)
+
+    candidates = []
+    for res in results:
+        if res.masks is None or res.boxes is None:
+            continue
+
+        masks = res.masks.data.cpu().numpy() > 0.5
+        for i, box in enumerate(res.boxes):
+            cls_id = int(box.cls[0])
+            cls_name = model.names[cls_id]
+            if object_classname.lower() not in cls_name.lower():
+                continue
+
+            conf = float(box.conf[0])
+            x1, y1, x2, y2 = box.xyxy[0].cpu().numpy().tolist()
+            candidates.append(
+                {
+                    "class_name": cls_name,
+                    "confidence": conf,
+                    "bbox": (float(x1), float(y1), float(x2), float(y2)),
+                    "mask": masks[i],
+                }
+            )
+    return candidates
+
+
+def detect_prompt_box_with_owlv2(image_path, object_prompt, score_threshold=0.08):
+    """Optional text-guided detection with OWLv2.
+
+    Returns (x1, y1, x2, y2) in pixel space or None if unavailable/not found.
+    """
+    try:
+        from transformers import Owlv2Processor, Owlv2ForObjectDetection
+    except Exception:
+        return None
+
+    try:
+        image = Image.open(image_path).convert("RGB")
+        processor = Owlv2Processor.from_pretrained("google/owlv2-base-patch16-ensemble")
+        model = Owlv2ForObjectDetection.from_pretrained("google/owlv2-base-patch16-ensemble")
+        model.eval()
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+
+        text_queries = [[f"a photo of a {object_prompt}", object_prompt]]
+        inputs = processor(text=text_queries, images=image, return_tensors="pt")
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = model(**inputs)
+
+        target_sizes = torch.tensor([[image.height, image.width]], device=device)
+        results = processor.post_process_object_detection(outputs=outputs, target_sizes=target_sizes)
+        res0 = results[0]
+        if len(res0["scores"]) == 0:
+            return None
+
+        scores = res0["scores"].detach().cpu().numpy()
+        boxes = res0["boxes"].detach().cpu().numpy()
+        best_idx = int(np.argmax(scores))
+        if float(scores[best_idx]) < score_threshold:
+            return None
+
+        x1, y1, x2, y2 = boxes[best_idx]
+        return float(x1), float(y1), float(x2), float(y2)
+    except Exception:
+        return None
+
+
+def refine_mask_with_sam(image_path, coarse_mask, prompt_box=None):
+    """Optional SAM refinement inside region hinted by coarse mask and optional prompt box.
+
+    Returns refined bool mask or None if SAM is unavailable/fails.
+    """
+    try:
+        from transformers import SamModel, SamProcessor
+        from scipy import ndimage
+    except Exception:
+        return None
+
+    try:
+        image = Image.open(image_path).convert("RGB")
+        h, w = coarse_mask.shape
+
+        ys, xs = np.where(coarse_mask)
+        if len(xs) == 0:
+            return None
+
+        cx1, cy1 = xs.min(), ys.min()
+        cx2, cy2 = xs.max(), ys.max()
+
+        if prompt_box is not None:
+            px1, py1, px2, py2 = prompt_box
+            x1 = int(max(0, min(cx1, px1)))
+            y1 = int(max(0, min(cy1, py1)))
+            x2 = int(min(w - 1, max(cx2, px2)))
+            y2 = int(min(h - 1, max(cy2, py2)))
+        else:
+            x1, y1, x2, y2 = int(cx1), int(cy1), int(cx2), int(cy2)
+
+        pad = 8
+        x1, y1 = max(0, x1 - pad), max(0, y1 - pad)
+        x2, y2 = min(w - 1, x2 + pad), min(h - 1, y2 + pad)
+
+        processor = SamProcessor.from_pretrained("facebook/sam-vit-base")
+        model = SamModel.from_pretrained("facebook/sam-vit-base")
+        model.eval()
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model.to(device)
+
+        inputs = processor(
+            images=image,
+            input_boxes=[[[x1, y1, x2, y2]]],
+            return_tensors="pt",
+        )
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+
+        with torch.no_grad():
+            outputs = model(**inputs, multimask_output=True)
+
+        masks = processor.image_processor.post_process_masks(
+            outputs.pred_masks.cpu(),
+            inputs["original_sizes"].cpu(),
+            inputs["reshaped_input_sizes"].cpu(),
+        )
+
+        sam_masks = masks[0][0].numpy()  # (num_masks, H, W)
+        iou_scores = outputs.iou_scores[0, 0].detach().cpu().numpy()
+        best_idx = int(np.argmax(iou_scores))
+        sam_mask = sam_masks[best_idx] > 0
+
+        # Keep SAM very close to change map to suppress subtle global style changes.
+        coarse_dilated = ndimage.binary_dilation(coarse_mask, iterations=5)
+        fused = sam_mask & coarse_dilated
+
+        # If intersection is too small, grow from coarse signal rather than trusting full SAM mask.
+        if fused.sum() < max(100, int(0.03 * max(1, coarse_mask.sum()))):
+            tighter = ndimage.binary_dilation(coarse_mask, iterations=2)
+            fused = sam_mask & tighter
+
+        structure = np.ones((3, 3), dtype=bool)
+        fused = ndimage.binary_opening(fused, structure=structure)
+        fused = ndimage.binary_closing(fused, structure=structure)
+        fused = ndimage.binary_fill_holes(fused)
+
+        fused = _select_best_component(fused, prompt_box=prompt_box, min_area=100, max_area_frac=0.30)
+
+        return fused.astype(bool)
+    except Exception:
+        return None
+
+
 def add_object_to_scene(
     object_image_path,
     object_obj_path,
@@ -343,13 +592,13 @@ def add_object_to_scene(
     opacities_raw = state["_model.opacities"].numpy()
     opacities = (1 / (1 + np.exp(-opacities_raw))).squeeze()
 
-    # Detect object in image
-    # YOLO detection timing
+    # Detect object in edited image with YOLO bbox
     t_yolo_start = time.time()
     model = YOLO("yolov8n.pt")
     results = model(object_image_path, verbose=False)
     t_yolo_end = time.time()
     timings['YOLO detection'] = t_yolo_end - t_yolo_start
+
     object_det = None
     for r_res in results:
         for box in r_res.boxes:
@@ -362,12 +611,17 @@ def add_object_to_scene(
                 break
         if object_det:
             break
+
     if not object_det:
         print(f"No {object_classname} detected in image.")
         return
-    print(f"{object_classname.capitalize()} detected: {object_det['class']} (conf={object_det['confidence']:.2f}), bbox={object_det['bbox']}")
 
-    # Save detection visualization
+    print(
+        f"{object_classname.capitalize()} detected: {object_det['class']} "
+        f"(conf={object_det['confidence']:.2f}), bbox={object_det['bbox']}"
+    )
+
+    # Save bbox visualization
     img = Image.open(object_image_path)
     fig, ax = plt.subplots(figsize=(10, 7))
     ax.imshow(img)
@@ -381,14 +635,18 @@ def add_object_to_scene(
     plt.close()
     print(f"Saved {object_classname}_detection_bbox.png in {SESSION_DIR}")
 
-    # Unprojection & 3D detection timing
-    t_unproj_start = time.time()
     if not os.path.exists(camera_state_path):
         print(f"Camera state file not found: {camera_state_path}")
-        print("Run camera selection first in this same session.")
         return
 
     camera_state = torch.load(camera_state_path, map_location="cpu", weights_only=False)
+    selected_view_path = camera_state.get("selected_view_path", os.path.join(SESSION_DIR, "selected_camera_view.png"))
+    if not os.path.exists(selected_view_path):
+        print(f"Selected view file not found: {selected_view_path}")
+        return
+
+    # Unprojection & 3D detection timing
+    t_unproj_start = time.time()
     cam = SceneCamera(
         position=camera_state["position"],
         wxyz=camera_state["wxyz"],
@@ -656,9 +914,10 @@ This script is split into two main functions:
     - Renders the scene from the selected angle and saves the image
 
 2. add_object_to_scene():
-    - Takes a user-supplied image with a vase added (via diffusion model)
-    - Uses YOLO to detect the vase in the image
-    - Unprojects the vase's detected 2D location to 3D, finds corresponding Gaussians in room.ckpt
+    - Takes the selected camera view and the Gemini-edited image
+    - Uses YOLO to detect requested object in edited image
+    - Uses YOLO bounding box for 3D gaussian filtering
+    - Unprojects bounding-box pixels to 3D, finds corresponding Gaussians in room.ckpt
     - Computes scale and rotation
     - Adds vase Gaussians to the scene and saves the new checkpoint
 """
