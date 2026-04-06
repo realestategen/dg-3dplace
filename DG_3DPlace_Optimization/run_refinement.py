@@ -7,6 +7,7 @@ import os
 from src.refiner.gaussian_io import load_and_split_scene, merge_and_save_scene
 from src.refiner.optimizer import PoseOptimizer
 from src.utils.loss_utils import RefinementLoss
+from src.utils.camera_utils import load_scout_camera
 
 # Import standard 3DGS rasterizer
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
@@ -21,6 +22,7 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
     target_mask = torch.tensor(cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE).copy()).unsqueeze(0).float().to(device) / 255.0
     
     camera = scout_camera_data
+    camera.update_resolution(target_rgb.shape[2], target_rgb.shape[1])
     
     # Background color for rasterization (usually black [0,0,0])
     bg_color = torch.tensor([0, 0, 0], dtype=torch.float32, device=device)
@@ -99,23 +101,23 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
             cov3D_precomp=None
         )
         
-        # 6. Mask Generation (Hack: Generate a 2D mask based on object indices)
-        # We render a secondary image where object Gaussians are white and bg is black
+        # 6. Render Mask (White object, Black background)
         obj_colors = torch.ones((transformed_obj['means'].shape[0], 3), device=device)
         bg_colors = torch.zeros((bg_gaussians['means'].shape[0], 3), device=device)
         mask_colors = torch.cat([bg_colors, obj_colors], dim=0)
         
         rendered_mask_img, _ = rasterizer(
-            means3D=combined_means.detach(), # Don't backprop through coordinates for the mask render
-            means2D=torch.zeros_like(combined_means, device=device),
+            # FIX: Removed .detach() so the mask gradients can flow back to the PoseOptimizer!
+            means3D=combined_means, 
+            means2D=torch.zeros_like(combined_means, requires_grad=True, device=device), 
             shs=None,
             colors_precomp=mask_colors,
-            opacities=combined_opacities.detach(),
-            scales=combined_scales.detach(),
-            rotations=combined_rotations.detach(),
+            opacities=combined_opacities,
+            scales=combined_scales,
+            rotations=combined_rotations,
             cov3D_precomp=None
         )
-        rendered_mask = rendered_mask_img[0:1, :, :] # Take one channel
+        rendered_mask = rendered_mask_img[0:1, :, :]
         
         # 7. Compute Loss & Step
         loss, loss_dict = loss_module(rendered_image, target_rgb, rendered_mask, target_mask)
@@ -125,7 +127,7 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
         pose_model.normalize_quaternion()
             
         if epoch % 20 == 0:
-            print(f"Epoch {epoch:03d} | Total: {loss.item():.4f} | RGB: {loss_dict['rgb']:.4f} | LPIPS: {loss_dict['lpips']:.4f}")
+            print(f"Epoch {epoch:03d} | Total: {loss.item():.4f} | RGB: {loss_dict['rgb']:.4f} | LPIPS: {loss_dict['lpips']:.4f} | MASK: {loss_dict['mask']:.4f}")
             
     # 8. Save output
     print("[*] Optimization complete. Saving...")
@@ -183,12 +185,15 @@ if __name__ == "__main__":
     
     # 4. Execute the loop
     try:
+        # Load the actual camera math saved from your Step 1
+        real_camera = load_scout_camera("data/inputs/selected_camera.pt")
+
         run_refinement(
             ckpt_path="data/inputs/scene_with_initial_object.ckpt",
             target_img_path=target_img_path,
             mask_path="data/inputs/object_mask.png",
             num_object_gaussians=15000, 
-            scout_camera_data=dummy_camera, 
+            scout_camera_data=real_camera, 
             output_path="data/outputs/scene_refined.ckpt"
         )
     except Exception as e:
