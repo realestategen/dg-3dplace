@@ -1,3 +1,14 @@
+TripoSR/
+sd_inpainting/
+room/
+placement_3/
+Hunyuan3D-2.1/
+addit/
+
+er; server = viser.ViserServer(); print(dir(server))"
+key-for-relay-server.pem
+
+
 # Python
 __pycache__/
 *.py[cod]
@@ -73,3 +84,5 @@ Thumbs.db
 !room/output/.gitkeep
 !room/data/.gitkeep
 !room/data/images/.gitkeep
+
+

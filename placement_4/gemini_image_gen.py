@@ -42,7 +42,7 @@ def generate_diffusion_image_with_gemini(
     image_b64 = base64.b64encode(image_bytes).decode("utf-8")
     prompt = (
         f"Add '{object_prompt}' to this image. "
-        "Do not change anything else in the scene. "
+        "Do not change anything else in the scene. Only add the specified object. Do not change pixels that do not belong to the added object of the input image."
         f"Keep resolution exactly {width}x{height}. "
         "Return only the edited image."
     )
