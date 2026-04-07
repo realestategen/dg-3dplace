@@ -13,6 +13,7 @@ import gsplat
 from gsplat import rasterization
 import time
 import psutil
+import trimesh
 
 # ══════════════════════════════════════════════════════════════════════
 # Configuration
@@ -654,6 +655,14 @@ def add_object_to_scene(
             )
             object_obj_path = gen_result["output_obj_path"]
             print(f"Generated object OBJ: {object_obj_path}")
+            if gen_result.get("textured_output_path"):
+                print(f"Generated textured mesh: {gen_result['textured_output_path']}")
+            if gen_result.get("mtl_path"):
+                print(f"Generated MTL: {gen_result['mtl_path']}")
+            if gen_result.get("albedo_path"):
+                print(f"Generated albedo texture: {gen_result['albedo_path']}")
+            if gen_result.get("texture_error"):
+                print(f"Texture generation warning: {gen_result['texture_error']}")
             if gen_result.get("object_only_png_path"):
                 print(f"Saved object-only PNG: {gen_result['object_only_png_path']}")
             if gen_result.get("gemini_object_cutout_path"):
@@ -784,7 +793,7 @@ def add_object_to_scene(
     translation = target_center
     rotation = np.eye(3)
     num_gaussians = 15000
-    color = [0.1, 0.3, 1.0]  # bright blue for visibility
+    fallback_color = [0.1, 0.3, 1.0]  # used only when textured color sampling fails
     C0 = 0.28209479177387814
     print(f"Target region center: {target_center}, extent: {target_extent}, scale (clamped): {scale}")
     print(f"Scene means min: {means.min(axis=0)}, max: {means.max(axis=0)}, center: {means.mean(axis=0)}")
@@ -854,7 +863,33 @@ def add_object_to_scene(
         return points.astype(np.float64), normals.astype(np.float64)
     vertices, faces = load_obj_mesh(object_obj_path)
     print(f"Loaded OBJ: {len(vertices)} vertices, {len(faces)} faces")
-    points, normals = sample_points_on_mesh(vertices, faces, num_gaussians)
+
+    sampled_colors = None
+    points = None
+    normals = None
+    try:
+        tri_mesh = trimesh.load(object_obj_path, force="mesh", process=False)
+        points, face_indices = trimesh.sample.sample_surface(tri_mesh, num_gaussians)
+        normals = np.asarray(tri_mesh.face_normals)[face_indices]
+
+        try:
+            color_mesh = tri_mesh.visual.to_color()
+            face_colors = np.asarray(color_mesh.face_colors)
+            if face_colors.size > 0:
+                sampled_colors = np.clip(face_colors[face_indices, :3].astype(np.float32) / 255.0, 0.0, 1.0)
+                print("Using textured/per-face colors from OBJ for Gaussian appearance.")
+        except Exception as e:
+            print(f"Could not sample face colors from OBJ visual: {e}")
+    except Exception as e:
+        print(f"Trimesh sampling failed, falling back to geometric sampler: {e}")
+
+    if points is None or normals is None:
+        points, normals = sample_points_on_mesh(vertices, faces, num_gaussians)
+
+    if sampled_colors is None:
+        sampled_colors = np.tile(np.array(fallback_color, dtype=np.float32), (num_gaussians, 1))
+        print("Falling back to flat object color because textured colors were not available.")
+
     print(f"Sampled {len(points)} points from mesh")
     # Center, rotate, scale, translate
     obj_min = points.min(axis=0)
@@ -873,8 +908,8 @@ def add_object_to_scene(
     scales_object = torch.full((num_gaussians, 3), log_scale, dtype=torch.float32)
     quats_object = torch.zeros(num_gaussians, 4, dtype=torch.float32)
     quats_object[:, 0] = 1.0
-    sh_color = (np.array(color) - 0.5) / C0
-    features_dc_object = torch.tensor(sh_color, dtype=torch.float32).unsqueeze(0).expand(num_gaussians, -1)
+    sh_color = (sampled_colors - 0.5) / C0
+    features_dc_object = torch.tensor(sh_color, dtype=torch.float32)
     features_dc_object = features_dc_object.unsqueeze(1)
     features_rest_object = torch.zeros(num_gaussians, 15, 3, dtype=torch.float32)
     opacities_object = torch.full((num_gaussians, 1), 5.0, dtype=torch.float32)  # high opacity for visibility
@@ -898,6 +933,14 @@ def add_object_to_scene(
     print(f"Object gaussians generated and integrated. Saved to {OUTPUT_PATH}")
     t_vase_end = time.time()
     timings['Vase integration'] = t_vase_end - t_vase_start
+    
+    # Render final view from saved camera angle to validate object placement
+    t_final_render_start = time.time()
+    final_view_path = render_final_view_with_saved_camera(OUTPUT_PATH, camera_state_path, SESSION_DIR)
+    t_final_render_end = time.time()
+    if final_view_path:
+        timings['Final render'] = t_final_render_end - t_final_render_start
+    
     # End timing and write resource report after final ckpt is created
     t_end = time.time()
     cpu_end = process.cpu_times()
@@ -920,6 +963,57 @@ def add_object_to_scene(
             f.write(f"GPU: {gpu_name}\n")
             f.write(f"GPU memory used (MB): {(gpu_mem_end - gpu_mem_start) / 1024 / 1024:.2f}\n")
     print(f"Resource report saved to {report_path}")
+
+
+def render_final_view_with_saved_camera(ckpt_path, camera_state_path, session_dir, output_name="final_view_with_object.png"):
+    """Render the final integrated scene from the saved user-selected camera angle.
+    
+    This allows instant validation of object placement without running view_room.py.
+    """
+    if not os.path.exists(camera_state_path):
+        print(f"[!] Camera state not found at {camera_state_path}, skipping final render.")
+        return None
+    
+    if not os.path.exists(ckpt_path):
+        print(f"[!] Checkpoint not found at {ckpt_path}, skipping final render.")
+        return None
+    
+    try:
+        print("\n--- Rendering Final View with Object ---")
+        # Load checkpoint and camera state
+        ckpt = torch.load(ckpt_path, map_location="cpu", weights_only=False)
+        state = ckpt["pipeline"]
+        camera_state = torch.load(camera_state_path, map_location="cpu", weights_only=False)
+        
+        # Extract Gaussian parameters
+        means = state["_model.means"].numpy()
+        scales = state["_model.scales"].numpy()
+        quats = state["_model.quats"].numpy()
+        features_dc = state["_model.features_dc"].numpy()
+        opacities_raw = state["_model.opacities"].numpy()
+        
+        # Reconstruct camera from saved state
+        cam_data = camera_state
+        cam = SceneCamera(
+            position=cam_data["position"],
+            wxyz=cam_data["wxyz"],
+            fov_rad=cam_data["fov_rad"],
+            width=cam_data["render_width"],
+            height=cam_data["render_height"]
+        )
+        
+        # Render
+        img, alpha = render_gaussians(means, scales, quats, features_dc, opacities_raw, cam)
+        
+        # Save result
+        output_path = os.path.join(session_dir, output_name)
+        Image.fromarray((img * 255).astype(np.uint8)).save(output_path)
+        print(f"Saved final view (with object) to: {output_path}")
+        
+        return output_path
+    except Exception as e:
+        print(f"[!] Final render failed: {e}")
+        return None
 
 
 def infer_detection_target_from_prompt(object_prompt):

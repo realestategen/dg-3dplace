@@ -2,6 +2,7 @@ import os
 import re
 import sys
 import argparse
+import subprocess
 from typing import Optional, Tuple, Dict, Any
 
 import torch
@@ -12,6 +13,7 @@ from gemini_image_gen import generate_object_cutout_with_gemini
 
 
 _HY3D_PIPELINE = None
+_HY3D_PAINT_PIPELINE = None
 
 
 def _resolve_hunyuan_paths() -> Tuple[str, str, str]:
@@ -20,6 +22,16 @@ def _resolve_hunyuan_paths() -> Tuple[str, str, str]:
     hy_shape = os.path.join(hy_dir, "hy3dshape")
     hy_paint = os.path.join(hy_dir, "hy3dpaint")
     return hy_dir, hy_shape, hy_paint
+
+
+def _resolve_hunyuan_paint_assets() -> Dict[str, str]:
+    hy_dir, _, hy_paint = _resolve_hunyuan_paths()
+    return {
+        "realesrgan_ckpt_path": os.path.join(hy_paint, "ckpt", "RealESRGAN_x4plus.pth"),
+        "multiview_cfg_path": os.path.join(hy_paint, "cfgs", "hunyuan-paint-pbr.yaml"),
+        "custom_pipeline": os.path.join(hy_paint, "hunyuanpaintpbr"),
+        "hy_dir": hy_dir,
+    }
 
 
 def _setup_hunyuan_imports() -> None:
@@ -39,6 +51,79 @@ def _get_shape_pipeline(model_path: str = "tencent/Hunyuan3D-2.1"):
 
     _HY3D_PIPELINE = Hunyuan3DDiTFlowMatchingPipeline.from_pretrained(model_path)
     return _HY3D_PIPELINE
+
+
+def _get_paint_pipeline(max_num_view: int = 6, resolution: int = 512):
+    global _HY3D_PAINT_PIPELINE
+    if _HY3D_PAINT_PIPELINE is not None:
+        return _HY3D_PAINT_PIPELINE
+
+    _setup_hunyuan_imports()
+    from textureGenPipeline import Hunyuan3DPaintPipeline, Hunyuan3DPaintConfig
+
+    conf = Hunyuan3DPaintConfig(max_num_view=max_num_view, resolution=resolution)
+    paint_assets = _resolve_hunyuan_paint_assets()
+
+    if os.path.exists(paint_assets["realesrgan_ckpt_path"]):
+        conf.realesrgan_ckpt_path = paint_assets["realesrgan_ckpt_path"]
+    if os.path.exists(paint_assets["multiview_cfg_path"]):
+        conf.multiview_cfg_path = paint_assets["multiview_cfg_path"]
+    if os.path.exists(paint_assets["custom_pipeline"]):
+        conf.custom_pipeline = paint_assets["custom_pipeline"]
+
+    _HY3D_PAINT_PIPELINE = Hunyuan3DPaintPipeline(conf)
+    return _HY3D_PAINT_PIPELINE
+
+
+def _run_hunyuan_paint_subprocess(
+    mesh_path: str,
+    image_path: str,
+    output_mesh_path: str,
+    texture_env: str,
+    max_num_view: int,
+    resolution: int,
+) -> Tuple[bool, str]:
+    """Run Hunyuan paint in a separate conda env (bpy-enabled)."""
+    texture_env = (texture_env or "").strip()
+    if not texture_env:
+        return False, "No texture subprocess env configured"
+
+    here = os.path.dirname(os.path.abspath(__file__))
+    worker_path = os.path.join(here, "hunyuan_paint_worker.py")
+    if not os.path.exists(worker_path):
+        return False, f"Worker script missing: {worker_path}"
+
+    cmd = [
+        "conda",
+        "run",
+        "-n",
+        texture_env,
+        "python",
+        worker_path,
+        "--mesh",
+        mesh_path,
+        "--image",
+        image_path,
+        "--output",
+        output_mesh_path,
+        "--views",
+        str(max_num_view),
+        "--resolution",
+        str(resolution),
+    ]
+
+    try:
+        result = subprocess.run(cmd, check=False, capture_output=True, text=True)
+    except Exception as e:
+        return False, f"Failed to launch subprocess painter: {e}"
+
+    if result.returncode != 0:
+        err = (result.stderr or "").strip()
+        out = (result.stdout or "").strip()
+        message = err if err else out
+        return False, f"Subprocess painter failed: {message}"
+
+    return True, (result.stdout or "").strip()
 
 
 def detect_bbox_with_owlv2(image_path: str, prompt: str, score_threshold: float = 0.06) -> Optional[Tuple[float, float, float, float]]:
@@ -141,7 +226,7 @@ def _remove_white_background(image: Image.Image, threshold: int = 250, alpha_cut
     white_mask = (rgb[:, :, 0] >= threshold) & (rgb[:, :, 1] >= threshold) & (rgb[:, :, 2] >= threshold)
     alpha[white_mask] = 0
     arr[:, :, 3] = np.where(alpha <= alpha_cutoff, 0, alpha)
-    return Image.fromarray(arr, mode="RGBA")
+    return Image.fromarray(arr)
 
 
 def _foreground_ratio(image: Image.Image) -> float:
@@ -250,6 +335,84 @@ def _save_temp_crop(crop: Image.Image, session_dir: Optional[str]) -> str:
     return temp_path
 
 
+def _save_temp_paint_input(image: Image.Image, session_dir: Optional[str]) -> str:
+    base_dir = session_dir or os.path.dirname(os.path.abspath(__file__))
+    os.makedirs(base_dir, exist_ok=True)
+    path = os.path.join(base_dir, "_paint_input.png")
+    image.convert("RGBA").save(path)
+    return path
+
+
+def _apply_image_colors_to_mesh(mesh_obj, source_image_path: str) -> bool:
+    """Apply per-vertex colors by projecting source image colors to mesh vertices."""
+    if not os.path.exists(source_image_path):
+        print(f"[!] Source image not found: {source_image_path}")
+        return False
+
+    try:
+        source_img = Image.open(source_image_path).convert("RGBA")
+        arr = np.array(source_img, dtype=np.uint8)
+        h, w = arr.shape[:2]
+
+        rgb = arr[:, :, :3]
+        alpha = arr[:, :, 3]
+        fg_mask = alpha > 20
+        if not np.any(fg_mask):
+            print("[!] Source image has no foreground alpha for color projection")
+            return False
+
+        # Robust fallback color for projected pixels that hit transparent regions.
+        fallback_rgb = np.median(rgb[fg_mask], axis=0).astype(np.uint8)
+
+        if not hasattr(mesh_obj, "vertices"):
+            return False
+
+        verts = np.asarray(mesh_obj.vertices, dtype=np.float32)
+        if verts.size == 0:
+            return False
+
+        mins = verts.min(axis=0)
+        maxs = verts.max(axis=0)
+        spans = np.maximum(maxs - mins, 1e-6)
+
+        # Planar projection: x -> u, y -> v, works well for upright object crops.
+        u = (verts[:, 0] - mins[0]) / spans[0]
+        v = 1.0 - ((verts[:, 1] - mins[1]) / spans[1])
+
+        x = np.clip((u * (w - 1)).astype(np.int32), 0, w - 1)
+        y = np.clip((v * (h - 1)).astype(np.int32), 0, h - 1)
+
+        sampled_rgba = arr[y, x]
+        sampled_rgb = sampled_rgba[:, :3]
+        sampled_a = sampled_rgba[:, 3:4]
+
+        # Replace transparent hits with a representative foreground color.
+        projected_rgb = np.where(sampled_a > 20, sampled_rgb, fallback_rgb)
+        vertex_rgba = np.concatenate(
+            [projected_rgb.astype(np.uint8), np.full((len(projected_rgb), 1), 255, dtype=np.uint8)],
+            axis=1,
+        )
+
+        mesh_obj.visual.vertex_colors = vertex_rgba
+        print("Applied projected vertex colors from source image")
+        return True
+    except Exception as e:
+        print(f"[!] Color projection failed: {e}")
+        return False
+
+    return False
+
+
+def _export_colored_glb(mesh_obj, output_obj_path: str) -> Optional[str]:
+    """Export a GLB companion file for reliable vertex-color visualization."""
+    try:
+        glb_path = os.path.splitext(output_obj_path)[0] + ".glb"
+        mesh_obj.export(glb_path)
+        return glb_path
+    except Exception:
+        return None
+
+
 def generate_obj_from_prompt_image(
     image_path: str,
     prompt: str,
@@ -259,6 +422,10 @@ def generate_obj_from_prompt_image(
     model_path: str = "tencent/Hunyuan3D-2.1",
     require_gemini_cutout: bool = False,
     api_key: Optional[str] = None,
+    enable_texture: bool = True,
+    texture_views: int = 6,
+    texture_resolution: int = 512,
+    texture_env: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Generate 3D OBJ from an image region and prompt using Hunyuan3D shape model."""
     if not os.path.exists(image_path):
@@ -305,8 +472,88 @@ def generate_obj_from_prompt_image(
     mesh_untextured = pipeline(image=crop_processed)[0]
     mesh_untextured.export(output_obj_path)
 
+    textured_output_path = None
+    texture_error = None
+    texture_method = "shape_only"
+    mtl_path = None
+    albedo_path = None
+    colored_glb_path = None
+
+    if enable_texture:
+        paint_input_path = object_only_png_path or _save_temp_paint_input(crop_processed, session_dir)
+
+        # Try Hunyuan paint pipeline first
+        try:
+            paint_pipeline = _get_paint_pipeline(max_num_view=texture_views, resolution=texture_resolution)
+            textured_output_path = paint_pipeline(
+                mesh_path=output_obj_path,
+                image_path=paint_input_path,
+                output_mesh_path=output_obj_path,
+            )
+            print("Using Hunyuan paint pipeline textures.")
+            texture_method = "hunyuan_paint"
+
+            obj_root, _ = os.path.splitext(output_obj_path)
+            mtl_candidate = obj_root + ".mtl"
+            albedo_candidate = obj_root + ".jpg"
+            if os.path.exists(mtl_candidate):
+                mtl_path = mtl_candidate
+            if os.path.exists(albedo_candidate):
+                albedo_path = albedo_candidate
+
+        except Exception as e:
+            texture_error = str(e)
+            print(f"Hunyuan paint failed ({texture_error}), trying fallback color projection...")
+
+            # Preferred fallback: run Hunyuan paint in separate bpy-enabled env.
+            ok, msg = _run_hunyuan_paint_subprocess(
+                mesh_path=output_obj_path,
+                image_path=paint_input_path,
+                output_mesh_path=output_obj_path,
+                texture_env=texture_env or os.environ.get("HY3D_TEXTURE_ENV", ""),
+                max_num_view=texture_views,
+                resolution=texture_resolution,
+            )
+            if ok:
+                textured_output_path = output_obj_path
+                texture_error = None
+                texture_method = "hunyuan_paint_subprocess"
+                print("Using Hunyuan paint via subprocess env.")
+
+                obj_root, _ = os.path.splitext(output_obj_path)
+                mtl_candidate = obj_root + ".mtl"
+                albedo_candidate = obj_root + ".jpg"
+                if os.path.exists(mtl_candidate):
+                    mtl_path = mtl_candidate
+                if os.path.exists(albedo_candidate):
+                    albedo_path = albedo_candidate
+            else:
+                print(f"Subprocess painter unavailable: {msg}")
+
+            # Fallback: apply colors directly from the input image (no Blender needed)
+            if textured_output_path is None:
+                try:
+                    mesh_obj = mesh_untextured.copy()
+                    if _apply_image_colors_to_mesh(mesh_obj, paint_input_path):
+                        mesh_obj.export(output_obj_path)
+                        print(f"Applied image colors, saved to {output_obj_path}")
+                        textured_output_path = output_obj_path
+                        colored_glb_path = _export_colored_glb(mesh_obj, output_obj_path)
+                        texture_error = None
+                        texture_method = "vertex_color_projection"
+                    else:
+                        print("Image color projection also failed, keeping untextured mesh.")
+                except Exception as fallback_error:
+                    print(f"Fallback color projection failed: {fallback_error}")
+
     return {
         "output_obj_path": output_obj_path,
+        "textured_output_path": textured_output_path,
+        "colored_glb_path": colored_glb_path,
+        "texture_method": texture_method,
+        "mtl_path": mtl_path,
+        "albedo_path": albedo_path,
+        "texture_error": texture_error,
         "bbox": bbox,
         "crop_path": debug_crop_path,
         "object_only_png_path": object_only_png_path,
@@ -324,6 +571,10 @@ def _parse_args():
     parser.add_argument("--bbox", nargs=4, type=float, default=None, help="Optional bbox x1 y1 x2 y2")
     parser.add_argument("--require-gemini-cutout", action="store_true", help="Fail if Gemini cutout is not used")
     parser.add_argument("--api-key", default=os.environ.get("GEMINI_API_KEY", ""), help="Gemini API key")
+    parser.add_argument("--no-texture", action="store_true", help="Disable Hunyuan paint texturing step")
+    parser.add_argument("--texture-views", type=int, default=6, help="Texture views for Hunyuan paint (6-9)")
+    parser.add_argument("--texture-resolution", type=int, default=512, help="Texture resolution for Hunyuan paint")
+    parser.add_argument("--texture-env", default=os.environ.get("HY3D_TEXTURE_ENV", ""), help="Optional conda env name for subprocess Hunyuan paint")
     return parser.parse_args()
 
 
@@ -338,6 +589,10 @@ def main():
         session_dir=args.session_dir or None,
         require_gemini_cutout=bool(args.require_gemini_cutout),
         api_key=(args.api_key or "").strip() or None,
+        enable_texture=not bool(args.no_texture),
+        texture_views=max(6, min(9, int(args.texture_views))),
+        texture_resolution=int(args.texture_resolution),
+        texture_env=(args.texture_env or "").strip() or None,
     )
     print("2D->3D generation completed")
     print(f"OBJ: {result['output_obj_path']}")
@@ -350,7 +605,22 @@ def main():
         print(f"Gemini cutout PNG: {result['gemini_object_cutout_path']}")
     if result.get("gemini_object_cleaned_path"):
         print(f"Gemini cleaned PNG: {result['gemini_object_cleaned_path']}")
+    if result.get("textured_output_path"):
+        print(f"Textured mesh: {result['textured_output_path']}")
+    if result.get("colored_glb_path"):
+        print(f"Colored GLB: {result['colored_glb_path']}")
+    if result.get("texture_method"):
+        print(f"Texture method: {result['texture_method']}")
+    if result.get("mtl_path"):
+        print(f"MTL: {result['mtl_path']}")
+    if result.get("albedo_path"):
+        print(f"Albedo: {result['albedo_path']}")
+    if result.get("texture_error") and not result.get("textured_output_path"):
+        print(f"Texture step failed: {result['texture_error']}")
 
 
 if __name__ == "__main__":
     main()
+
+
+
