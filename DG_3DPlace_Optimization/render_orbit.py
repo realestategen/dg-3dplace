@@ -75,7 +75,7 @@ def main():
     # 3. Setup Orbit Parameters and Hardcoded Directory
     center = means.mean(axis=0) if args.lookat is None else np.array(args.lookat)
     
-    out_dir = "data/view_input/"
+    out_dir = "data/view_output/"
     os.makedirs(out_dir, exist_ok=True)
     
     print(f"Starting render loop for {args.num_frames} frames...")
