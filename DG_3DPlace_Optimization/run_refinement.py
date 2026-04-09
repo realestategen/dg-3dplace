@@ -6,17 +6,17 @@ import os
 
 # Import our modules
 from src.refiner.gaussian_io import load_and_split_scene, merge_and_save_scene
-from src.refiner.optimizer import PoseOptimizer
 from src.utils.loss_utils import RefinementLoss
+from src.refiner.optimizer import PoseOptimizer
 from src.utils.camera_utils import load_scout_camera
 
 # Import standard 3DGS rasterizer
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
+import torch.nn as nn
 
 def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, scout_camera_data, output_path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    # 1. Data Loading
     bg_gaussians, obj_gaussians, full_ckpt = load_and_split_scene(ckpt_path, num_object_gaussians, device)
     
     if not os.path.exists(target_img_path) and os.path.exists(target_img_path.replace(".png", ".jpg")):
@@ -28,9 +28,6 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
     camera = scout_camera_data
     camera.update_resolution(target_rgb.shape[2], target_rgb.shape[1])
     
-    # ==========================================
-    # [1] CAMERA ALIGNMENT
-    # ==========================================
     w2c = camera.world_view_transform.transpose(0, 1).clone()
     camera.world_view_transform = w2c.transpose(0, 1).contiguous()
     
@@ -41,7 +38,7 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
     P[0, 0] = 1.0 / tanHalfFovX
     P[1, 1] = 1.0 / tanHalfFovY
     P[2, 2] = zfar / (zfar - znear)
-    P[3, 2] = 1.0 # <--- THIS MEANS +Z IS FORWARD
+    P[3, 2] = 1.0 
     P[2, 3] = -(zfar * znear) / (zfar - znear)
     
     projmatrix = P.transpose(0, 1).contiguous()
@@ -54,43 +51,28 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
     pose_model = PoseOptimizer(device=device)
     loss_module = RefinementLoss(device=device)
     
-    optimizer = torch.optim.Adam([
-        {'params': [pose_model.translation], 'lr': 0.01}, 
-        {'params': [pose_model.rotation], 'lr': 0.005},
-        {'params': [pose_model.scale], 'lr': 0.005}
-    ])
-
     # ==========================================
-    # [2] SNIPER TELEPORT (Fixed Depth Direction)
+    # [2] LOCK INITIAL POSITION (NO MORE TELEPORTING!)
     # ==========================================
     with torch.no_grad():
-        ys, xs = torch.where(target_mask[0] > 0.5)
-        if len(ys) > 0:
-            cx2d, cy2d = xs.float().mean().item(), ys.float().mean().item()
-        else:
-            cx2d, cy2d = camera.image_width / 2.0, camera.image_height / 2.0
-            
-        ndc_x = (cx2d / camera.image_width) * 2.0 - 1.0
-        ndc_y = (cy2d / camera.image_height) * 2.0 - 1.0 # Fixed: +Y is down in OpenCV
+        # Find exactly where the blue blob already is in the .ckpt
+        true_initial_center = obj_gaussians['means'].mean(dim=0)
         
-        depth = 5.0 # Positive Z is forward!
-        cam_x = ndc_x * depth * math.tan(camera.FoVx * 0.5)
-        cam_y = ndc_y * depth * math.tan(camera.FoVy * 0.5)
-        cam_space_pos = torch.tensor([cam_x, cam_y, depth, 1.0], device=device) # +depth
+        # Lock the optimizer's anchor and translation to that exact spot
+        pose_model.obj_center = true_initial_center.clone()
+        pose_model.translation.copy_(true_initial_center)
         
-        c2w = torch.inverse(w2c)
-        spawn_pos = torch.matmul(c2w, cam_space_pos)[:3]
-        
-        obj_center = obj_gaussians['means'].mean(dim=0)
-        desired_scale = 5.0 
-        
-        pose_model.scale.copy_(torch.tensor([desired_scale, desired_scale, desired_scale], device=device))
-        pose_model.translation.copy_(spawn_pos - (obj_center * desired_scale))
-        print(f"[*] Sniper Teleport: Spawned object directly IN FRONT of camera at {spawn_pos}")
+        print(f"[*] Object locked at its original .ckpt position: {true_initial_center}")
+    # ==========================================
+
+    optimizer = torch.optim.Adam([
+        {'params': [pose_model.translation], 'lr': 0.02}, 
+        {'params': [pose_model.rotation], 'lr': 0.01},
+        {'params': [pose_model.scale_scalar], 'lr': 0.01} 
+    ])
 
     epochs = 200
     
-    # 3. Main Loop
     for epoch in range(epochs):
         optimizer.zero_grad()
         
@@ -128,9 +110,6 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
         obj_active_opacities = torch.sigmoid(obj_ops).contiguous()
         obj_active_rotations = torch.nn.functional.normalize(transformed_obj['rotations'], p=2, dim=-1).contiguous()
 
-        # ==========================================
-        # [3] RGB RASTERIZER (Uses SH)
-        # ==========================================
         rgb_raster_settings = GaussianRasterizationSettings(
             image_height=int(camera.image_height),
             image_width=int(camera.image_width),
@@ -159,7 +138,7 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
         )
         
         # ==========================================
-        # [4] MASK RASTERIZER (Bypasses SH)
+        # [4] MASK RASTERIZER (True Silhouette)
         # ==========================================
         mask_raster_settings = GaussianRasterizationSettings(
             image_height=int(camera.image_height),
@@ -178,25 +157,26 @@ def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, 
         mask_rasterizer = GaussianRasterizer(raster_settings=mask_raster_settings)
 
         obj_colors = torch.ones((transformed_obj['means'].shape[0], 3), device=device).contiguous()
-        forced_mask_opacities = torch.ones_like(obj_active_opacities).contiguous()
         
+        # [!] REMOVED the opacity hack! We use the true, frozen opacities of the dragon.
         rendered_mask_img, _ = mask_rasterizer(
             means3D=transformed_obj['means'].contiguous(), 
             means2D=torch.zeros_like(transformed_obj['means'], requires_grad=True, device=device), 
             shs=None,
             colors_precomp=obj_colors,
-            opacities=forced_mask_opacities,
+            opacities=obj_active_opacities, # <--- True, soft opacities
             scales=obj_active_scales,
             rotations=obj_active_rotations,
             cov3D_precomp=None
         )
-        rendered_mask = rendered_mask_img[0:1, :, :]
+        # Apply a tiny threshold so we only see the solid parts of the dragon, not the fuzz
+        rendered_mask = torch.clamp(rendered_mask_img[0:1, :, :], 0.0, 1.0)
 
-        if epoch == 0:
+        if epoch % 20 == 0:
             import torchvision
             os.makedirs("data/outputs/", exist_ok=True)
-            torchvision.utils.save_image(rendered_image, "data/outputs/DEBUG_camera_view.png")
-            torchvision.utils.save_image(rendered_mask, "data/outputs/DEBUG_rendered_mask.png")
+            torchvision.utils.save_image(rendered_image, f"data/outputs/DEBUG_camera_view_{epoch}.png")
+            torchvision.utils.save_image(rendered_mask, f"data/outputs/DEBUG_rendered_mask_{epoch}.png")
         
         loss, loss_dict = loss_module(rendered_image, target_rgb, rendered_mask, target_mask)
         loss.backward()
