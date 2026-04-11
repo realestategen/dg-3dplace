@@ -13,7 +13,6 @@ import gsplat
 from gsplat import rasterization
 import time
 import psutil
-import trimesh
 
 # ══════════════════════════════════════════════════════════════════════
 # Configuration
@@ -35,7 +34,18 @@ def _load_generate_obj_from_prompt_image():
     return module.generate_obj_from_prompt_image
 
 
+def _load_glb_to_gaussians():
+    module_path = os.path.join(os.path.dirname(__file__), "glb_to_gaussians.py")
+    spec = importlib.util.spec_from_file_location("glb_to_gs", module_path)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"Unable to load module from {module_path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.glb_to_gaussians
+
+
 generate_obj_from_prompt_image = _load_generate_obj_from_prompt_image()
+glb_to_gaussians = _load_glb_to_gaussians()
 
 CKPT_PATH = "bench_park.ckpt"
 RENDER_W, RENDER_H = 1280, 720
@@ -640,6 +650,8 @@ def add_object_to_scene(
         f"conf={object_det['confidence']:.2f}, bbox={object_det['bbox']}"
     )
 
+    color_mesh_path = object_obj_path
+
     # Generate OBJ automatically from detected bbox + prompt if path wasn't provided.
     if not object_obj_path:
         auto_obj_path = os.path.join(SESSION_DIR, "generated_object.obj")
@@ -654,7 +666,10 @@ def add_object_to_scene(
                 api_key=api_key,
             )
             object_obj_path = gen_result["output_obj_path"]
+            color_mesh_path = gen_result.get("output_color_mesh_path") or gen_result.get("output_glb_path") or object_obj_path
             print(f"Generated object OBJ: {object_obj_path}")
+            if color_mesh_path and color_mesh_path != object_obj_path:
+                print(f"Using textured mesh for colors: {color_mesh_path}")
             if gen_result.get("textured_output_path"):
                 print(f"Generated textured mesh: {gen_result['textured_output_path']}")
             if gen_result.get("mtl_path"):
@@ -672,6 +687,9 @@ def add_object_to_scene(
         except Exception as e:
             print(f"Failed to generate OBJ from detected image region: {e}")
             return
+
+    if color_mesh_path is None:
+        color_mesh_path = object_obj_path
 
     # Save bbox visualization
     img = Image.open(object_image_path)
@@ -756,7 +774,7 @@ def add_object_to_scene(
     t_vase_start = time.time()
 
     # 2. Add vase gaussians to the original checkpoint (no red highlight)
-    print(f"\n--- Generating and integrating {detection_label} gaussians from OBJ ---")
+    print(f"\n--- Generating and integrating {detection_label} gaussians from textured mesh ---")
     if len(object_indices) == 0:
         print(f"No gaussians detected for {detection_label} placement, skipping integration.")
         # End timing and write report even if failed
@@ -791,141 +809,40 @@ def add_object_to_scene(
     # Clamp scale to min(X, Y) to avoid oversize
     scale = min(target_extent[0], target_extent[1])
     translation = target_center
-    rotation = np.eye(3)
     num_gaussians = 15000
-    fallback_color = [0.1, 0.3, 1.0]  # used only when textured color sampling fails
-    C0 = 0.28209479177387814
     print(f"Target region center: {target_center}, extent: {target_extent}, scale (clamped): {scale}")
     print(f"Scene means min: {means.min(axis=0)}, max: {means.max(axis=0)}, center: {means.mean(axis=0)}")
-    # OBJ mesh loading and sampling
-    def load_obj_mesh(obj_path):
-        # End timing and write resource report after final ckpt is created
-        t_end = time.time()
-        cpu_end = process.cpu_times()
-        mem_end = process.memory_info().rss
-        gpu_mem_end = None
-        if torch.cuda.is_available():
-            gpu_mem_end = torch.cuda.memory_allocated()
-        report_path = os.path.join(SESSION_DIR, "detection_resource_report.txt")
-        with open(report_path, "w") as f:
-            f.write(f"Detection Resource Report\n========================\n")
-            f.write(f"Status: Success\n")
-            f.write(f"Elapsed time (s): {t_end - t_start:.2f}\n")
-            f.write(f"CPU user time (s): {cpu_end.user - cpu_start.user:.2f}\n")
-            f.write(f"CPU system time (s): {cpu_end.system - cpu_start.system:.2f}\n")
-            f.write(f"Memory usage (MB): {(mem_end - mem_start) / 1024 / 1024:.2f}\n")
-            if gpu_mem_start is not None and gpu_mem_end is not None:
-                f.write(f"GPU: {gpu_name}\n")
-                f.write(f"GPU memory used (MB): {(gpu_mem_end - gpu_mem_start) / 1024 / 1024:.2f}\n")
-        print(f"Resource report saved to {report_path}")
-        vertices = []
-        faces = []
-        with open(obj_path, "r") as f:
-            for line in f:
-                line = line.strip()
-                if line.startswith("v "):
-                    parts = line.split()
-                    vertices.append([float(parts[1]), float(parts[2]), float(parts[3])])
-                elif line.startswith("f "):
-                    parts = line.split()[1:]
-                    face_verts = []
-                    for p in parts:
-                        idx = int(p.split("/")[0]) - 1
-                        face_verts.append(idx)
-                    for i in range(1, len(face_verts) - 1):
-                        faces.append([face_verts[0], face_verts[i], face_verts[i + 1]])
-        vertices = np.array(vertices, dtype=np.float64)
-        faces = np.array(faces, dtype=np.int64)
-        return vertices, faces
-    def sample_points_on_mesh(vertices, faces, num_points):
-        v0 = vertices[faces[:, 0]]
-        v1 = vertices[faces[:, 1]]
-        v2 = vertices[faces[:, 2]]
-        cross = np.cross(v1 - v0, v2 - v0)
-        areas = 0.5 * np.linalg.norm(cross, axis=1)
-        total_area = areas.sum()
-        probs = areas / total_area
-        tri_indices = np.random.choice(len(faces), size=num_gaussians, p=probs)
-        r1 = np.random.rand(num_gaussians)
-        r2 = np.random.rand(num_gaussians)
-        sqrt_r1 = np.sqrt(r1)
-        bary_u = 1 - sqrt_r1
-        bary_v = sqrt_r1 * (1 - r2)
-        bary_w = sqrt_r1 * r2
-        p0 = vertices[faces[tri_indices, 0]]
-        p1 = vertices[faces[tri_indices, 1]]
-        p2 = vertices[faces[tri_indices, 2]]
-        points = (bary_u[:, None] * p0 + bary_v[:, None] * p1 + bary_w[:, None] * p2)
-        face_normals = cross[tri_indices]
-        norms = np.linalg.norm(face_normals, axis=1, keepdims=True)
-        norms = np.maximum(norms, 1e-8)
-        normals = face_normals / norms
-        return points.astype(np.float64), normals.astype(np.float64)
-    vertices, faces = load_obj_mesh(object_obj_path)
-    print(f"Loaded OBJ: {len(vertices)} vertices, {len(faces)} faces")
+    mesh_for_color = color_mesh_path or object_obj_path
+    if mesh_for_color is None:
+        print("No mesh path available for object Gaussian generation.")
+        return
 
-    sampled_colors = None
-    points = None
-    normals = None
+    if not mesh_for_color.lower().endswith(".glb"):
+        print(f"Textured GLB not found; got '{mesh_for_color}'. Falling back to previous path may reduce color fidelity.")
+
     try:
-        tri_mesh = trimesh.load(object_obj_path, force="mesh", process=False)
-        points, face_indices = trimesh.sample.sample_surface(tri_mesh, num_gaussians)
-        normals = np.asarray(tri_mesh.face_normals)[face_indices]
-
-        try:
-            visual = tri_mesh.visual
-            face_colors = np.asarray(getattr(visual, "face_colors", np.array([])))
-            vertex_colors = np.asarray(getattr(visual, "vertex_colors", np.array([])))
-
-            if face_colors.size > 0 and len(face_colors) >= len(tri_mesh.faces):
-                sampled_colors = np.clip(face_colors[face_indices, :3].astype(np.float32) / 255.0, 0.0, 1.0)
-                print("Using face colors from OBJ visual for Gaussian appearance.")
-            elif vertex_colors.size > 0 and len(vertex_colors) >= len(tri_mesh.vertices):
-                sampled_face_vertices = np.asarray(tri_mesh.faces)[face_indices]
-                vcols = vertex_colors[sampled_face_vertices, :3].astype(np.float32) / 255.0
-                sampled_colors = np.clip(vcols.mean(axis=1), 0.0, 1.0)
-                print("Using vertex colors from OBJ visual for Gaussian appearance.")
-            elif hasattr(visual, "to_color"):
-                color_mesh = visual.to_color()
-                face_colors = np.asarray(getattr(color_mesh, "face_colors", np.array([])))
-                if face_colors.size > 0 and len(face_colors) >= len(tri_mesh.faces):
-                    sampled_colors = np.clip(face_colors[face_indices, :3].astype(np.float32) / 255.0, 0.0, 1.0)
-                    print("Using converted face colors from OBJ visual for Gaussian appearance.")
-        except Exception as e:
-            print(f"Could not sample face colors from OBJ visual: {e}")
+        object_gaussians = glb_to_gaussians(
+            glb_path=mesh_for_color,
+            num_gaussians=num_gaussians,
+            target_scale=float(scale),
+            scale_factor=0.4,
+            rotation=None,
+            translation=translation,
+            opacity_logit=5.0,
+            run_render_colmap=True,
+            work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
+        )
+        means_object = object_gaussians["means"]
+        scales_object = object_gaussians["scales"]
+        quats_object = object_gaussians["quats"]
+        features_dc_object = object_gaussians["features_dc"]
+        features_rest_object = object_gaussians["features_rest"]
+        opacities_object = object_gaussians["opacities"]
+        print(f"Generated {means_object.shape[0]} textured object gaussians from GLB pipeline.")
     except Exception as e:
-        print(f"Trimesh sampling failed, falling back to geometric sampler: {e}")
+        print(f"Failed converting GLB to gaussians: {e}")
+        return
 
-    if points is None or normals is None:
-        points, normals = sample_points_on_mesh(vertices, faces, num_gaussians)
-
-    if sampled_colors is None:
-        sampled_colors = np.tile(np.array(fallback_color, dtype=np.float32), (num_gaussians, 1))
-        print("Falling back to flat object color because textured colors were not available.")
-
-    print(f"Sampled {len(points)} points from mesh")
-    # Center, rotate, scale, translate
-    obj_min = points.min(axis=0)
-    obj_max = points.max(axis=0)
-    obj_center = (obj_min + obj_max) / 2.0
-    print(f"OBJ center: {obj_center}, min: {obj_min}, max: {obj_max}")
-    points -= obj_center
-    pts_scene = np.column_stack([points[:, 0], -points[:, 2], points[:, 1]])
-    SCALE_FACTOR = 0.4
-    pts_scene *= (scale * SCALE_FACTOR) / (obj_max - obj_min).max()
-    pts_scene += translation
-    print(f"Object points after transform: min {pts_scene.min(axis=0)}, max {pts_scene.max(axis=0)}, mean {pts_scene.mean(axis=0)}")
-    means_object = torch.tensor(pts_scene, dtype=torch.float32)
-    adaptive_radius = (np.ptp(pts_scene, axis=0).prod() / num_gaussians) ** (1.0 / 3.0) * 1.5
-    log_scale = math.log(max(adaptive_radius, 1e-7))
-    scales_object = torch.full((num_gaussians, 3), log_scale, dtype=torch.float32)
-    quats_object = torch.zeros(num_gaussians, 4, dtype=torch.float32)
-    quats_object[:, 0] = 1.0
-    sh_color = (sampled_colors - 0.5) / C0
-    features_dc_object = torch.tensor(sh_color, dtype=torch.float32)
-    features_dc_object = features_dc_object.unsqueeze(1)
-    features_rest_object = torch.zeros(num_gaussians, 15, 3, dtype=torch.float32)
-    opacities_object = torch.full((num_gaussians, 1), 5.0, dtype=torch.float32)  # high opacity for visibility
     features_dc = state["_model.features_dc"]
     opacities_raw = state["_model.opacities"]
     if features_dc.ndim == 2:
