@@ -17,7 +17,7 @@ OUTPUT_DIR = "output"
 
 # CORRECTED INPUT PATH
 MESH_INPUT = "intermediate_mesh/mesh.obj" 
-IMAGE_INPUT = "input/demo1_no_bg.png"
+IMAGE_INPUT = "input/demo_no_bg.png"
 
 # Ensure output directory exists
 os.makedirs(OUTPUT_DIR, exist_ok=True)

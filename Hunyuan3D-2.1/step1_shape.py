@@ -14,8 +14,8 @@ sys.path.insert(0, './hy3dpaint')
 from hy3dshape.pipelines import Hunyuan3DDiTFlowMatchingPipeline
 
 # --- CONFIGURATION ---
-INPUT_IMAGE_PATH = "input/demo1.png"
-PROCESSED_IMAGE_PATH = "input/demo1_no_bg.png" # We save the clean image here
+INPUT_IMAGE_PATH = "input/demo.png"
+PROCESSED_IMAGE_PATH = "input/demo_no_bg.png" # We save the clean image here
 MESH_OUTPUT_PATH = "intermediate_mesh/mesh.obj"
 
 print(f">>> [Step 1] Processing Image: {INPUT_IMAGE_PATH}")
