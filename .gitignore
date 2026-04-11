@@ -2,7 +2,6 @@ TripoSR/
 sd_inpainting/
 room/
 placement_3/
-Hunyuan3D-2.1/
 addit/
 
 er; server = viser.ViserServer(); print(dir(server))"
