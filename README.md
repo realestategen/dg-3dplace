@@ -613,3 +613,57 @@ sudo docker run --rm -v $(pwd):/workspace \
 
 **Last Updated**: January 4, 2026  
 **Maintained by**: DG-3DPlace Team
+
+---
+
+## 🧩 Generating Colored 3D Objects with Hunyuan3D-2.1
+
+Use this workflow to generate a colored 3D object (`.glb`) from a 2D input image.
+
+### 1. Navigate to Hunyuan folder and activate environment
+
+```bash
+cd /home/cse_g2/RealEstateGen/DG-3DPlace/Hunyuan3D-2.1
+conda activate hunyuan
+```
+
+### 2. Run shape generation (Step 1)
+
+Open `step1_shape.py` and update input paths as needed (normally images are in `input/`):
+
+```python
+INPUT_IMAGE_PATH = "input/demo.png"
+PROCESSED_IMAGE_PATH = "input/demo_no_bg.png"
+```
+
+Then run:
+
+```bash
+python step1_shape.py
+```
+
+This creates an intermediate mesh at:
+
+```text
+intermediate_mesh/mesh.obj
+```
+
+### 3. Run texture/paint generation (Step 2)
+
+Open `step2_paint.py` and update paths:
+- Update `IMAGE_INPUT` to your background-removed image path.
+- `MESH_INPUT` is usually already correct by default (`intermediate_mesh/mesh.obj`).
+
+Then run:
+
+```bash
+python step2_paint.py
+```
+
+Final outputs are saved in:
+
+```text
+output/
+```
+
+Use an online 3D viewer (or any local 3D viewer) to open the generated `.glb` file.
