@@ -873,11 +873,24 @@ def add_object_to_scene(
         normals = np.asarray(tri_mesh.face_normals)[face_indices]
 
         try:
-            color_mesh = tri_mesh.visual.to_color()
-            face_colors = np.asarray(color_mesh.face_colors)
-            if face_colors.size > 0:
+            visual = tri_mesh.visual
+            face_colors = np.asarray(getattr(visual, "face_colors", np.array([])))
+            vertex_colors = np.asarray(getattr(visual, "vertex_colors", np.array([])))
+
+            if face_colors.size > 0 and len(face_colors) >= len(tri_mesh.faces):
                 sampled_colors = np.clip(face_colors[face_indices, :3].astype(np.float32) / 255.0, 0.0, 1.0)
-                print("Using textured/per-face colors from OBJ for Gaussian appearance.")
+                print("Using face colors from OBJ visual for Gaussian appearance.")
+            elif vertex_colors.size > 0 and len(vertex_colors) >= len(tri_mesh.vertices):
+                sampled_face_vertices = np.asarray(tri_mesh.faces)[face_indices]
+                vcols = vertex_colors[sampled_face_vertices, :3].astype(np.float32) / 255.0
+                sampled_colors = np.clip(vcols.mean(axis=1), 0.0, 1.0)
+                print("Using vertex colors from OBJ visual for Gaussian appearance.")
+            elif hasattr(visual, "to_color"):
+                color_mesh = visual.to_color()
+                face_colors = np.asarray(getattr(color_mesh, "face_colors", np.array([])))
+                if face_colors.size > 0 and len(face_colors) >= len(tri_mesh.faces):
+                    sampled_colors = np.clip(face_colors[face_indices, :3].astype(np.float32) / 255.0, 0.0, 1.0)
+                    print("Using converted face colors from OBJ visual for Gaussian appearance.")
         except Exception as e:
             print(f"Could not sample face colors from OBJ visual: {e}")
     except Exception as e:
