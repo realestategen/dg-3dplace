@@ -667,3 +667,87 @@ output/
 ```
 
 Use an online 3D viewer (or any local 3D viewer) to open the generated `.glb` file.
+
+---
+
+## 🔁 Running the Refinement Loop (DG_3DPlace_Optimization)
+
+Use this section to run the refinement loop script from this project.
+
+### 1. Move to the optimization directory
+
+From the project root:
+
+```bash
+cd DG_3DPlace_Optimization
+```
+
+### 2. Activate the conda environment
+
+```bash
+conda activate dg3d_optimize
+```
+
+If the environment does not exist yet, create it and install dependencies:
+
+```bash
+conda create -n dg3d_optimize python=3.10 -y
+conda activate dg3d_optimize
+pip install -r requirements.txt
+```
+
+### 3. Install rasterizer dependency (required)
+
+`run_refinement.py` imports `diff_gaussian_rasterization`, which is not installed by default from `requirements.txt`.
+
+Quick check:
+
+```bash
+python -c "import diff_gaussian_rasterization; print('diff_gaussian_rasterization OK')"
+```
+
+If missing, install from source:
+
+```bash
+git clone --recursive https://github.com/graphdeco-inria/diff-gaussian-rasterization
+pip install ./diff-gaussian-rasterization
+```
+
+### 4. Ensure required input files exist
+
+By default, `run_refinement.py` uses:
+
+- `data/inputs/scene_with_initial_object.ckpt`
+- `data/inputs/diffusion_target.png`
+- `data/inputs/object_mask.png`
+- `data/inputs/selected_camera.pt`
+
+Output is written to:
+
+- `data/outputs/scene_refined.ckpt`
+
+Debug renders are also written every 20 epochs to `data/outputs/`.
+
+### 5. Run the main refinement script
+
+```bash
+python run_refinement.py
+```
+
+### 6. Update number of epochs
+
+Edit this line in `run_refinement.py` if you want to run longer or shorter optimization:
+
+```python
+epochs = 200
+```
+
+### 7. Current loss terms
+
+Main losses used in the refinement loop are:
+
+- RGB loss
+- LPIPS loss
+- Mask loss
+
+Note: The current implementation in `src/utils/loss_utils.py` also includes a Center-of-Mass alignment term in the total objective.
