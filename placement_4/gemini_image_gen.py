@@ -207,8 +207,9 @@ def generate_object_cutout_with_gemini(
     prompt = (
         f"Create a clean, detailed cutout of the object described as '{object_prompt}'. "
         "Keep only the object itself. Remove the background, shadows, floor, reflections, and scene context. "
-        "Do not invent extra parts. Preserve the object shape, silhouette, texture, and details. "
-        "Return the object centered on a plain pure white background (#FFFFFF) only. "
+        "Do not invent extra parts. Preserve the object's exact proportions, length, width, silhouette, texture, and details. "
+        "Do not shrink, stretch, crop, zoom, or recompose the object. "
+        "Return the exact object on a plain pure white background (#FFFFFF) only, with the full object visible. "
         "Do not use transparency, gradients, or any extra elements. "
         f"Keep resolution exactly {width}x{height}. Return only the edited image."
     )
@@ -335,8 +336,17 @@ def generate_object_cutout_with_gemini(
 
     with Image.open(output_image_path) as generated:
         if generated.size != (width, height):
-            generated = generated.resize((width, height), Image.LANCZOS)
-            generated.save(output_image_path)
+            # Preserve object proportions: fit into the target canvas instead of stretching.
+            fitted = Image.new("RGB", (width, height), (255, 255, 255))
+            src = generated.convert("RGB")
+            scale = min(width / src.width, height / src.height)
+            new_w = max(1, int(round(src.width * scale)))
+            new_h = max(1, int(round(src.height * scale)))
+            resized = src.resize((new_w, new_h), Image.LANCZOS)
+            offset_x = (width - new_w) // 2
+            offset_y = (height - new_h) // 2
+            fitted.paste(resized, (offset_x, offset_y))
+            fitted.save(output_image_path)
 
     print(
         f"Gemini object cutout saved to {output_image_path} "

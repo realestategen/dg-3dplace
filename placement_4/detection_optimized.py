@@ -586,6 +586,180 @@ def refine_mask_with_sam(image_path, coarse_mask, prompt_box=None):
         return None
 
 
+def _save_black_white_mask(mask_bool, output_path):
+    """Save binary mask as black/white PNG."""
+    mask_u8 = (mask_bool.astype(np.uint8) * 255)
+    Image.fromarray(mask_u8, mode="L").save(output_path)
+    return output_path
+
+
+def _extract_cutout_silhouette(cutout_image_path):
+    """Extract object silhouette from Gemini cutout image."""
+    from scipy import ndimage
+
+    if not cutout_image_path or not os.path.exists(cutout_image_path):
+        return None
+
+    img_rgba = Image.open(cutout_image_path).convert("RGBA")
+    arr = np.asarray(img_rgba, dtype=np.uint8)
+    rgb = arr[:, :, :3]
+    alpha = arr[:, :, 3]
+
+    # Prefer alpha if present; otherwise remove near-white background.
+    if (alpha < 250).any():
+        mask = alpha > 10
+    else:
+        max_c = rgb.max(axis=2)
+        min_c = rgb.min(axis=2)
+        near_white = (max_c >= 245) & ((max_c - min_c) <= 12)
+        mask = ~near_white
+
+    if mask.sum() == 0:
+        return None
+
+    structure = np.ones((3, 3), dtype=bool)
+    mask = ndimage.binary_opening(mask, structure=structure)
+    mask = ndimage.binary_closing(mask, structure=structure)
+    mask = ndimage.binary_fill_holes(mask)
+    mask = _select_best_component(mask, prompt_box=None, min_area=40, max_area_frac=0.98)
+    if mask.sum() == 0:
+        return None
+
+    # Crop to the tight silhouette bounds so scale matching uses true object size.
+    ys, xs = np.where(mask)
+    y1, y2 = int(ys.min()), int(ys.max())
+    x1, x2 = int(xs.min()), int(xs.max())
+    tight = mask[y1:y2 + 1, x1:x2 + 1]
+    return tight.astype(bool)
+
+
+def _match_cutout_inside_bbox(edited_image_path, prompt_box, cutout_image_path):
+    """Match cutout silhouette inside detected bbox and return full-res mask."""
+    from scipy import ndimage
+
+    cutout_mask = _extract_cutout_silhouette(cutout_image_path)
+    if cutout_mask is None:
+        raise RuntimeError("Could not extract silhouette from gemini_object_cutout.png")
+
+    edited_img = np.asarray(Image.open(edited_image_path).convert("RGB"), dtype=np.float32) / 255.0
+    h, w = edited_img.shape[:2]
+    edited_gray = edited_img.mean(axis=2)
+
+    cutout_rgb = np.asarray(Image.open(cutout_image_path).convert("RGB"), dtype=np.float32) / 255.0
+    cutout_gray = cutout_rgb.mean(axis=2)
+
+    x1, y1, x2, y2 = prompt_box
+    bx1 = int(max(0, min(w - 1, np.floor(x1))))
+    by1 = int(max(0, min(h - 1, np.floor(y1))))
+    bx2 = int(max(0, min(w, np.ceil(x2))))
+    by2 = int(max(0, min(h, np.ceil(y2))))
+    bw = max(1, bx2 - bx1)
+    bh = max(1, by2 - by1)
+
+    ch, cw = cutout_mask.shape
+    fit_scale = min(bw / max(1, cw), bh / max(1, ch))
+    scale_candidates = [fit_scale * s for s in (0.82, 0.9, 1.0, 1.1, 1.2)]
+
+    best = None
+    best_score = -1e9
+
+    for scale in scale_candidates:
+        tw = max(8, int(round(cw * scale)))
+        th = max(8, int(round(ch * scale)))
+        if tw > bw or th > bh:
+            continue
+
+        mask_rs = np.asarray(
+            Image.fromarray((cutout_mask.astype(np.uint8) * 255), mode="L").resize((tw, th), Image.NEAREST),
+            dtype=np.uint8,
+        ) > 0
+        if mask_rs.sum() < 50:
+            continue
+
+        gray_rs = np.asarray(
+            Image.fromarray((cutout_gray * 255).astype(np.uint8), mode="L").resize((tw, th), Image.BILINEAR),
+            dtype=np.float32,
+        ) / 255.0
+
+        cx = bx1 + (bw - tw) // 2
+        cy = by1 + (bh - th) // 2
+        dx_lim = max(6, int(0.15 * bw))
+        dy_lim = max(6, int(0.15 * bh))
+        step = 2
+
+        for oy in range(max(by1, cy - dy_lim), min(by2 - th, cy + dy_lim) + 1, step):
+            for ox in range(max(bx1, cx - dx_lim), min(bx2 - tw, cx + dx_lim) + 1, step):
+                patch = edited_gray[oy:oy + th, ox:ox + tw]
+                m = mask_rs
+                pv = patch[m]
+                cv = gray_rs[m]
+                if pv.size < 40:
+                    continue
+
+                pv_std = float(pv.std()) + 1e-6
+                cv_std = float(cv.std()) + 1e-6
+                pv_n = (pv - float(pv.mean())) / pv_std
+                cv_n = (cv - float(cv.mean())) / cv_std
+                ncc = float((pv_n * cv_n).mean())
+
+                # Prefer solutions nearer bbox center when scores are similar.
+                dist_penalty = 0.002 * np.hypot((ox + tw / 2) - (bx1 + bw / 2), (oy + th / 2) - (by1 + bh / 2))
+                score = ncc - float(dist_penalty)
+                if score > best_score:
+                    best_score = score
+                    best = (ox, oy, tw, th, mask_rs)
+
+    if best is None:
+        # Fallback: centered fit into bbox.
+        tw = max(8, int(round(cw * fit_scale)))
+        th = max(8, int(round(ch * fit_scale)))
+        tw = min(tw, bw)
+        th = min(th, bh)
+        mask_rs = np.asarray(
+            Image.fromarray((cutout_mask.astype(np.uint8) * 255), mode="L").resize((tw, th), Image.NEAREST),
+            dtype=np.uint8,
+        ) > 0
+        ox = bx1 + max(0, (bw - tw) // 2)
+        oy = by1 + max(0, (bh - th) // 2)
+    else:
+        ox, oy, tw, th, mask_rs = best
+
+    out = np.zeros((h, w), dtype=bool)
+    out[oy:oy + th, ox:ox + tw] = mask_rs
+
+    bbox_mask = np.zeros((h, w), dtype=bool)
+    bbox_mask[by1:by2, bx1:bx2] = True
+    out = out & bbox_mask
+
+    structure = np.ones((3, 3), dtype=bool)
+    out = ndimage.binary_opening(out, structure=structure)
+    out = ndimage.binary_closing(out, structure=structure)
+    out = ndimage.binary_fill_holes(out)
+    out = _select_best_component(out, prompt_box=prompt_box, min_area=80, max_area_frac=0.30)
+
+    if out.sum() == 0:
+        raise RuntimeError("Matched cutout mask became empty inside bbox")
+    return out.astype(bool)
+
+
+def save_added_object_mask_for_session(
+    edited_image_path,
+    session_dir,
+    prompt_box,
+    cutout_image_path,
+    output_name="added_object_mask.png",
+):
+    """Save final full-resolution mask using detected bbox + Gemini cutout matching."""
+    output_path = os.path.join(session_dir, output_name)
+    final_mask = _match_cutout_inside_bbox(
+        edited_image_path=edited_image_path,
+        prompt_box=prompt_box,
+        cutout_image_path=cutout_image_path,
+    )
+    _save_black_white_mask(final_mask, output_path)
+    return output_path
+
+
 def add_object_to_scene(
     object_image_path,
     object_obj_path=None,
@@ -651,6 +825,8 @@ def add_object_to_scene(
     )
 
     color_mesh_path = object_obj_path
+    gemini_cutout_path = None
+    gemini_cutout_processed_path = None
 
     # Generate OBJ automatically from detected bbox + prompt if path wasn't provided.
     if not object_obj_path:
@@ -682,14 +858,30 @@ def add_object_to_scene(
                 print(f"Saved object-only PNG: {gen_result['object_only_png_path']}")
             if gen_result.get("gemini_object_cutout_path"):
                 print(f"Saved Gemini cutout PNG: {gen_result['gemini_object_cutout_path']}")
+                gemini_cutout_path = gen_result["gemini_object_cutout_path"]
             if gen_result.get("gemini_object_cleaned_path"):
                 print(f"Saved Gemini cleaned PNG: {gen_result['gemini_object_cleaned_path']}")
+                gemini_cutout_processed_path = gen_result["gemini_object_cleaned_path"]
         except Exception as e:
             print(f"Failed to generate OBJ from detected image region: {e}")
             return
 
     if color_mesh_path is None:
         color_mesh_path = object_obj_path
+
+    if not gemini_cutout_path:
+        session_cutout = os.path.join(SESSION_DIR, "gemini_object_cutout.png")
+        if os.path.exists(session_cutout):
+            gemini_cutout_path = session_cutout
+
+    if not gemini_cutout_processed_path:
+        session_processed = os.path.join(SESSION_DIR, "gemini_object_cutout_processed.png")
+        if os.path.exists(session_processed):
+            gemini_cutout_processed_path = session_processed
+        else:
+            session_cleaned = os.path.join(SESSION_DIR, "gemini_object_cleaned.png")
+            if os.path.exists(session_cleaned):
+                gemini_cutout_processed_path = session_cleaned
 
     # Save bbox visualization
     img = Image.open(object_image_path)
@@ -714,6 +906,28 @@ def add_object_to_scene(
     if not os.path.exists(selected_view_path):
         print(f"Selected view file not found: {selected_view_path}")
         return
+
+    # Additional artifact: full-resolution black/white mask from bbox + Gemini cutout.
+    cutout_for_mask = None
+    if gemini_cutout_processed_path and os.path.exists(gemini_cutout_processed_path):
+        cutout_for_mask = gemini_cutout_processed_path
+    elif gemini_cutout_path and os.path.exists(gemini_cutout_path):
+        cutout_for_mask = gemini_cutout_path
+
+    if cutout_for_mask and os.path.exists(cutout_for_mask):
+        try:
+            mask_path = save_added_object_mask_for_session(
+                edited_image_path=object_image_path,
+                session_dir=SESSION_DIR,
+                prompt_box=object_det["bbox"],
+                cutout_image_path=cutout_for_mask,
+                output_name="added_object_mask.png",
+            )
+            print(f"Saved added object mask (black/white): {mask_path}")
+        except Exception as e:
+            print(f"Warning: failed to save added object mask from bbox+cutout: {e}")
+    else:
+        print("Warning: Gemini cutout processed/original file not found; skipping added_object_mask.png")
 
     # Unprojection & 3D detection timing
     t_unproj_start = time.time()
@@ -809,7 +1023,7 @@ def add_object_to_scene(
     # Clamp scale to min(X, Y) to avoid oversize
     scale = min(target_extent[0], target_extent[1])
     translation = target_center
-    num_gaussians = 15000
+    num_gaussians = 1000000
     print(f"Target region center: {target_center}, extent: {target_extent}, scale (clamped): {scale}")
     print(f"Scene means min: {means.min(axis=0)}, max: {means.max(axis=0)}, center: {means.mean(axis=0)}")
     mesh_for_color = color_mesh_path or object_obj_path
