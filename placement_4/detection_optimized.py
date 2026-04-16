@@ -20,6 +20,10 @@ import psutil
 
 import os
 import datetime
+import sys
+import importlib
+import subprocess
+import shutil
 import importlib.util
 from gemini_image_gen import generate_diffusion_image_with_gemini
 
@@ -70,6 +74,10 @@ SESSION_DIR = f"session_{SESSION_TIMESTAMP}"
 os.makedirs(SESSION_DIR, exist_ok=True)
 OUTPUT_PATH = os.path.join(SESSION_DIR, "room_with_object.ckpt")
 CAMERA_STATE_PATH = os.path.join(SESSION_DIR, "selected_camera_state.pt")
+OPTIMIZATION_ROOT = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "..", "DG_3DPlace_Optimization")
+)
+OPTIMIZATION_CONDA_ENV = os.environ.get("OPTIMIZATION_CONDA_ENV", "dg3d_optimize").strip()
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1072,6 +1080,7 @@ def add_object_to_scene(
         state["_model.features_rest"] = torch.cat([state["_model.features_rest"], features_rest_object], dim=0)
     state["_model.opacities"] = torch.cat([state["_model.opacities"], opacities_object], dim=0)
     n_after = state["_model.means"].shape[0]
+    num_object_gaussians = int(n_after - n_before)
     print(f"Gaussians before: {n_before}, after: {n_after} (added {n_after-n_before})")
     torch.save(ckpt, OUTPUT_PATH)
     print(f"Object gaussians generated and integrated. Saved to {OUTPUT_PATH}")
@@ -1084,6 +1093,28 @@ def add_object_to_scene(
     t_final_render_end = time.time()
     if final_view_path:
         timings['Final render'] = t_final_render_end - t_final_render_start
+
+    # Optional refinement step using optimization module with existing session artifacts.
+    t_opt_start = time.time()
+    optimized_ckpt_path = run_post_placement_optimization(
+        initial_ckpt_path=OUTPUT_PATH,
+        camera_state_path=camera_state_path,
+        session_dir=SESSION_DIR,
+        num_object_gaussians=num_object_gaussians,
+    )
+    t_opt_end = time.time()
+    if optimized_ckpt_path:
+        timings['Post-placement optimization'] = t_opt_end - t_opt_start
+        t_opt_render_start = time.time()
+        optimized_view_path = render_final_view_with_saved_camera(
+            optimized_ckpt_path,
+            camera_state_path,
+            SESSION_DIR,
+            output_name="final_view_with_object_optimized.png",
+        )
+        t_opt_render_end = time.time()
+        if optimized_view_path:
+            timings['Optimized final render'] = t_opt_render_end - t_opt_render_start
     
     # End timing and write resource report after final ckpt is created
     t_end = time.time()
@@ -1157,6 +1188,164 @@ def render_final_view_with_saved_camera(ckpt_path, camera_state_path, session_di
         return output_path
     except Exception as e:
         print(f"[!] Final render failed: {e}")
+        return None
+
+
+def _load_post_placement_optimization_modules():
+    """Dynamically import optimization modules without modifying their source files."""
+    if not os.path.isdir(OPTIMIZATION_ROOT):
+        raise FileNotFoundError(f"Optimization folder not found: {OPTIMIZATION_ROOT}")
+
+    if OPTIMIZATION_ROOT not in sys.path:
+        sys.path.insert(0, OPTIMIZATION_ROOT)
+
+    run_refinement_module = importlib.import_module("run_refinement")
+    camera_utils_module = importlib.import_module("src.utils.camera_utils")
+
+    if not hasattr(run_refinement_module, "run_refinement"):
+        raise AttributeError("run_refinement.py does not expose run_refinement")
+    if not hasattr(camera_utils_module, "load_scout_camera"):
+        raise AttributeError("camera_utils does not expose load_scout_camera")
+
+    return run_refinement_module.run_refinement, camera_utils_module.load_scout_camera
+
+
+def _run_post_placement_optimization_in_conda_env(
+    env_name,
+    initial_ckpt_path,
+    camera_state_path,
+    target_img_path,
+    mask_path,
+    num_object_gaussians,
+    optimized_output_path,
+):
+    """Run optimization in a separate conda env to use env-specific dependencies."""
+    if not env_name:
+        return False
+
+    conda_exe = os.environ.get("CONDA_EXE", "").strip() or shutil.which("conda")
+    if not conda_exe:
+        print("[!] conda executable not found on PATH; cannot use external optimization env.")
+        return False
+
+    launcher_code = (
+        "import os, sys\n"
+        f"optimization_root = {OPTIMIZATION_ROOT!r}\n"
+        "if optimization_root not in sys.path:\n"
+        "    sys.path.insert(0, optimization_root)\n"
+        "from run_refinement import run_refinement\n"
+        "from src.utils.camera_utils import load_scout_camera\n"
+        f"camera = load_scout_camera({camera_state_path!r})\n"
+        "run_refinement(\n"
+        f"    ckpt_path={initial_ckpt_path!r},\n"
+        f"    target_img_path={target_img_path!r},\n"
+        f"    mask_path={mask_path!r},\n"
+        f"    num_object_gaussians={int(num_object_gaussians)},\n"
+        "    scout_camera_data=camera,\n"
+        f"    output_path={optimized_output_path!r},\n"
+        ")\n"
+    )
+
+    cmd = [
+        conda_exe,
+        "run",
+        "-n",
+        env_name,
+        "python",
+        "-c",
+        launcher_code,
+    ]
+
+    print(f"Running optimization via conda env: {env_name}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.stdout:
+        print(result.stdout.strip())
+    if result.returncode != 0:
+        if result.stderr:
+            print(result.stderr.strip())
+        raise RuntimeError(f"conda optimization process failed with code {result.returncode}")
+
+    return True
+
+
+def run_post_placement_optimization(initial_ckpt_path, camera_state_path, session_dir, num_object_gaussians):
+    """Run optimization refinement in the same runtime on session artifacts."""
+    selected_view_path = os.path.join(session_dir, "selected_camera_view.png")
+    target_img_path = os.path.join(session_dir, "gemini_diffusion_added.png")
+    mask_path = os.path.join(session_dir, "added_object_mask.png")
+    optimized_output_path = os.path.join(session_dir, "room_with_object_optimized.ckpt")
+
+    required_paths = [
+        ("initial checkpoint", initial_ckpt_path),
+        ("camera state", camera_state_path),
+        ("selected camera view", selected_view_path),
+        ("diffusion-added target image", target_img_path),
+        ("added object mask", mask_path),
+    ]
+    missing = [f"{name}: {path}" for name, path in required_paths if not os.path.exists(path)]
+    if missing:
+        print("[!] Skipping optimization because required files are missing:")
+        for item in missing:
+            print(f"    - {item}")
+        return None
+
+    if int(num_object_gaussians) <= 0:
+        print("[!] Skipping optimization because num_object_gaussians is not positive.")
+        return None
+
+    try:
+        run_refinement, load_scout_camera = _load_post_placement_optimization_modules()
+    except Exception as e:
+        print(f"[!] Failed to import optimization modules: {e}")
+        run_refinement = None
+        load_scout_camera = None
+
+    try:
+        print("\n--- Running Post-Placement Optimization ---")
+        print(f"Using checkpoint: {initial_ckpt_path}")
+        print(f"Using camera state: {camera_state_path}")
+        print(f"Using target image: {target_img_path}")
+        print(f"Using mask image: {mask_path}")
+        print(f"Object gaussian count for split: {int(num_object_gaussians)}")
+
+        ran_in_conda = False
+        if OPTIMIZATION_CONDA_ENV:
+            try:
+                ran_in_conda = _run_post_placement_optimization_in_conda_env(
+                    env_name=OPTIMIZATION_CONDA_ENV,
+                    initial_ckpt_path=initial_ckpt_path,
+                    camera_state_path=camera_state_path,
+                    target_img_path=target_img_path,
+                    mask_path=mask_path,
+                    num_object_gaussians=num_object_gaussians,
+                    optimized_output_path=optimized_output_path,
+                )
+            except Exception as conda_err:
+                print(f"[!] Conda-env optimization failed ({OPTIMIZATION_CONDA_ENV}): {conda_err}")
+                print("[!] Falling back to current runtime environment for optimization.")
+
+        if not ran_in_conda:
+            if run_refinement is None or load_scout_camera is None:
+                print("[!] Optimization modules unavailable in current runtime; skipping optimization.")
+                return None
+            real_camera = load_scout_camera(camera_state_path)
+            run_refinement(
+                ckpt_path=initial_ckpt_path,
+                target_img_path=target_img_path,
+                mask_path=mask_path,
+                num_object_gaussians=int(num_object_gaussians),
+                scout_camera_data=real_camera,
+                output_path=optimized_output_path,
+            )
+
+        if not os.path.exists(optimized_output_path):
+            print(f"[!] Optimization did not produce expected output: {optimized_output_path}")
+            return None
+
+        print(f"Post-placement optimization finished. Saved to {optimized_output_path}")
+        return optimized_output_path
+    except Exception as e:
+        print(f"[!] Post-placement optimization failed: {e}")
         return None
 
 
