@@ -14,10 +14,10 @@ from src.utils.camera_utils import load_scout_camera
 from diff_gaussian_rasterization import GaussianRasterizationSettings, GaussianRasterizer
 import torch.nn as nn
 
-def run_refinement(ckpt_path, target_img_path, mask_path, num_object_gaussians, scout_camera_data, output_path):
+def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, output_path):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     
-    bg_gaussians, obj_gaussians, full_ckpt = load_and_split_scene(ckpt_path, num_object_gaussians, device)
+    bg_gaussians, obj_gaussians, full_ckpt = load_and_split_scene(ckpt_path, device=device)
     
     if not os.path.exists(target_img_path) and os.path.exists(target_img_path.replace(".png", ".jpg")):
         target_img_path = target_img_path.replace(".png", ".jpg")
@@ -198,7 +198,6 @@ if __name__ == "__main__":
             ckpt_path="data/inputs/scene_with_initial_object.ckpt",
             target_img_path="data/inputs/diffusion_target.png",
             mask_path="data/inputs/object_mask.png",
-            num_object_gaussians=15000, 
             scout_camera_data=real_camera, 
             output_path="data/outputs/scene_refined.ckpt"
         )
