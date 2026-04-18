@@ -742,12 +742,88 @@ Edit this line in `run_refinement.py` if you want to run longer or shorter optim
 epochs = 200
 ```
 
-### 7. Current loss terms
+### 7. Loss terms used in refinement (detailed)
 
-Main losses used in the refinement loop are:
+The refinement objective is a weighted combination of three main losses, plus a fixed center-of-mass alignment term.
 
-- RGB loss
-- LPIPS loss
-- Mask loss
+Implementation location:
 
-Note: The current implementation in `src/utils/loss_utils.py` also includes a Center-of-Mass alignment term in the total objective.
+- Loss module: `src/utils/loss_utils.py` (inside `DG_3DPlace_Optimization/`)
+- Main loss entry point:
+
+```python
+def forward(self, rendered_rgb, target_rgb, rendered_mask, target_mask, weights=(0.6, 0.4, 0.3)):
+```
+
+$$
+\mathcal{L}_{\text{total}} = w_{\text{rgb}}\,\mathcal{L}_{\text{rgb}} + w_{\text{lpips}}\,\mathcal{L}_{\text{lpips}} + w_{\text{mask}}\,\mathcal{L}_{\text{mask}} + 5.0\,\mathcal{L}_{\text{com}}
+$$
+
+Current default tuple in code is:
+
+- `weights=(0.6, 0.4, 0.3)` in order `(RGB, LPIPS, MASK)`
+
+The additional CoM term (`5.0 * L_com`) is currently fixed in `src/utils/loss_utils.py`.
+
+#### RGB loss (pixel-level color consistency)
+
+- What it checks: per-pixel color differences between render and target.
+- In this project: RGB loss is computed on masked RGB (`target_mask`) to focus supervision on the inserted object area.
+- Why it matters: keeps the object's color and local photometric appearance aligned with the target.
+- Limitation: it is strict about exact pixel values, so lighting/shadow shifts can still produce penalties.
+
+#### LPIPS loss (perceptual texture/feature consistency)
+
+- What it checks: high-level perceptual similarity (texture, edges, structure), not just exact RGB values.
+- Why it matters here: helps prevent cases where clipping artifacts (for example, thin grass/branch-like structures crossing the object) look structurally wrong even if some pixels are numerically close.
+- Practical intuition: RGB keeps the object the "right color"; LPIPS helps keep it looking like the correct object class/texture.
+
+#### Mask loss (silhouette alignment)
+
+- What it checks: overlap between rendered object silhouette and target mask (BCE loss).
+- Why it matters: provides strong geometric guidance for placement and shape alignment in image space.
+- Limitation: if weighted too high, optimization may prioritize fast silhouette matching over realistic depth/occlusion behavior.
+
+#### Center-of-Mass (CoM) alignment term (global pull)
+
+- What it checks: distance between rendered-mask center and target-mask center.
+- Why it matters: provides a global directional signal even when overlap is initially poor.
+- In this implementation: it is always active and heavily weighted (`5.0`) to avoid stalled optimization early in training.
+
+### 8. Why convergence can take 100 epochs (vs 40)
+
+If you increase RGB/LPIPS influence relative to mask, the optimization problem becomes harder and usually slower.
+
+- Fast regime (high mask, low appearance weights): optimizer can "sprint" to match silhouette quickly, even if it causes clipping/intersection artifacts.
+- Quality regime (higher RGB/LPIPS): optimizer must satisfy silhouette and visual realism at the same time, so it often "moves carefully" around complex geometry.
+
+In cluttered scenes (grass, corners, rocks, thin structures), this can naturally push convergence from ~40 epochs to 100+ epochs.
+
+### 9. How to combine the weights
+
+There is no single universal best combination. The best setting depends on scene complexity and your priority:
+
+- Speed of alignment (mask-heavy)
+- Visual realism / anti-clipping quality (RGB + LPIPS heavy)
+
+Recommended profiles (tuple order is `(RGB, LPIPS, MASK)`):
+
+| Profile | Weights | Best for | Typical behavior |
+|--------|---------|----------|------------------|
+| Balanced quality | `(0.6, 0.4, 0.3)` | Complex terrain/occlusions | Slower but more robust visual fit |
+| Aggressive fast fit | `(0.3, 0.2, 0.8)` | Flat/simple scenes | Fast silhouette lock, higher clipping risk |
+| Mid-speed compromise | `(0.5, 0.4, 0.5)` | If current run feels too slow | Adds mask pull while preserving appearance checks |
+
+Important notes:
+
+- Weight order must stay `(RGB, LPIPS, MASK)`.
+- Weights do not need to sum to 1.0, but relative ratios matter.
+- Because CoM has fixed weight `5.0`, scaling all three weights up/down changes their strength relative to CoM.
+
+### 10. Practical tuning workflow
+
+1. Start with balanced: `(0.6, 0.4, 0.3)`.
+2. Check debug renders every 20 epochs (`data/outputs/DEBUG_*.png`).
+3. If object is too slow to reach target mask, increase mask by `+0.1` to `+0.3`.
+4. If clipping/texture corruption appears, increase RGB and/or LPIPS.
+5. Re-run for at least 80-120 epochs in complex scenes before concluding non-convergence.
