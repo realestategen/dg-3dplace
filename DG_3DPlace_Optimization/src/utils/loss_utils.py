@@ -10,7 +10,7 @@ class RefinementLoss(nn.Module):
         # VGG is standard for LPIPS in view synthesis tasks
         self.lpips_fn = lpips.LPIPS(net='vgg').to(device)
         
-    def forward(self, rendered_rgb, target_rgb, rendered_mask, target_mask, weights=(0.1, 0.1, 0.8)):
+    def forward(self, rendered_rgb, target_rgb, rendered_mask, target_mask, weights=(0.6, 0.4, 0.3)):
         """
         Computes the composite loss for refinement.
         Args:
