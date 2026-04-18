@@ -1,0 +1,42 @@
+{
+  "run_label": "run_01_baseline",
+  "returncode": 0,
+  "prompt_id": "baseline",
+  "prompt": "no added object, keep the scene unchanged",
+  "target_text": "A real-estate scene",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_182836",
+  "timing": {
+    "run_total_s": 223.45775747299194,
+    "placement_total_including_gen_s": 222.60938382148743,
+    "placement_total_excluding_gen_s": 222.6093521118164,
+    "gemini_total_s": 1.9073486328125e-05,
+    "hunyuan_total_s": 1.2636184692382812e-05,
+    "optimization_total_s": null
+  },
+  "stage_times": {
+    "OWLv2 detection": 5.4,
+    "Unprojection & 3D detection": 0.06,
+    "Highlighting & ckpt": 0.61,
+    "Vase integration": 1.18,
+    "Final render": 0.51,
+    "Total": 198.99
+  },
+  "eval_pre": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  },
+  "eval_post": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  }
+}

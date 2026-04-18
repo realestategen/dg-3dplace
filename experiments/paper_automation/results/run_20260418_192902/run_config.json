@@ -1,0 +1,12 @@
+{
+  "project_root": "/home/cse_g2/RealEstateGen/DG-3DPlace",
+  "placement_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4",
+  "eval_env": "dg3d_eval",
+  "camera_mode": "random",
+  "camera_index": 2,
+  "seed": 42,
+  "prompt_count": 13,
+  "skip_eval": false,
+  "output_root": "/home/cse_g2/RealEstateGen/DG-3DPlace/experiments/paper_automation/results/run_20260418_192902",
+  "generated_at": "2026-04-18T20:25:03.880245"
+}

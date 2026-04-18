@@ -1,0 +1,302 @@
+[
+  {
+    "t": 1776520744.0914605,
+    "line": "/home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/torch/utils/cpp_extension.py:2059: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. "
+  },
+  {
+    "t": 1776520744.0914967,
+    "line": "If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST']."
+  },
+  {
+    "t": 1776520744.0915031,
+    "line": "  warnings.warn("
+  },
+  {
+    "t": 1776520744.0920346,
+    "line": ""
+  },
+  {
+    "t": 1776520744.092044,
+    "line": "--- Unified Pipeline (Single Runtime / Single Session) ---"
+  },
+  {
+    "t": 1776520744.0920498,
+    "line": "1) Generate candidate camera views"
+  },
+  {
+    "t": 1776520744.0920546,
+    "line": "2) Choose one camera interactively"
+  },
+  {
+    "t": 1776520744.092059,
+    "line": "3) Save camera metadata (.pt) inside this session folder"
+  },
+  {
+    "t": 1776520744.0920637,
+    "line": "4) Generate diffusion-added image with Gemini API"
+  },
+  {
+    "t": 1776520744.0920684,
+    "line": "5) Detect object bbox and auto-generate OBJ via 2d_3d.py"
+  },
+  {
+    "t": 1776520744.0920732,
+    "line": "Viewer command after completion: python view_room.py session_20260418_192903/room_with_object.ckpt --port 8080"
+  },
+  {
+    "t": 1776520744.0920777,
+    "line": ""
+  },
+  {
+    "t": 1776520744.0920813,
+    "line": "--- Camera Selection & Rendering ---"
+  },
+  {
+    "t": 1776520744.0920854,
+    "line": "Loading checkpoint..."
+  },
+  {
+    "t": 1776520744.0921013,
+    "line": "  Camera 1: azimuth=0\u00b0, pos=[-0.307  0.353  0.702]"
+  },
+  {
+    "t": 1776520744.092107,
+    "line": "  Camera 2: azimuth=24\u00b0, pos=[-0.328  0.454  0.702]"
+  },
+  {
+    "t": 1776520744.0921123,
+    "line": "  Camera 3: azimuth=48\u00b0, pos=[-0.389  0.538  0.702]"
+  },
+  {
+    "t": 1776520744.0921223,
+    "line": "  Camera 4: azimuth=72\u00b0, pos=[-0.479  0.59   0.702]"
+  },
+  {
+    "t": 1776520744.0921264,
+    "line": "  Camera 5: azimuth=96\u00b0, pos=[-0.582  0.601  0.702]"
+  },
+  {
+    "t": 1776520744.0921304,
+    "line": "  Camera 6: azimuth=120\u00b0, pos=[-0.681  0.569  0.702]"
+  },
+  {
+    "t": 1776520744.0921347,
+    "line": "  Camera 7: azimuth=144\u00b0, pos=[-0.758  0.499  0.702]"
+  },
+  {
+    "t": 1776520744.0921414,
+    "line": "  Camera 8: azimuth=168\u00b0, pos=[-0.8    0.405  0.702]"
+  },
+  {
+    "t": 1776520744.0921457,
+    "line": "  Camera 9: azimuth=192\u00b0, pos=[-0.8    0.301  0.702]"
+  },
+  {
+    "t": 1776520744.0921495,
+    "line": "  Camera 10: azimuth=216\u00b0, pos=[-0.758  0.206  0.702]"
+  },
+  {
+    "t": 1776520744.092154,
+    "line": "  Camera 11: azimuth=240\u00b0, pos=[-0.681  0.137  0.702]"
+  },
+  {
+    "t": 1776520744.0921586,
+    "line": "  Camera 12: azimuth=264\u00b0, pos=[-0.582  0.105  0.702]"
+  },
+  {
+    "t": 1776520744.092164,
+    "line": "  Camera 13: azimuth=288\u00b0, pos=[-0.479  0.116  0.702]"
+  },
+  {
+    "t": 1776520744.092168,
+    "line": "  Camera 14: azimuth=312\u00b0, pos=[-0.389  0.168  0.702]"
+  },
+  {
+    "t": 1776520744.0921724,
+    "line": "  Camera 15: azimuth=336\u00b0, pos=[-0.328  0.251  0.702]"
+  },
+  {
+    "t": 1776520744.0921764,
+    "line": "Generated 15 cameras around scene center"
+  },
+  {
+    "t": 1776520744.0921807,
+    "line": "  Rendering camera 1/15..."
+  },
+  {
+    "t": 1776520751.4280038,
+    "line": "    alpha coverage: 98.8%"
+  },
+  {
+    "t": 1776520751.4280283,
+    "line": "  Rendering camera 2/15..."
+  },
+  {
+    "t": 1776520751.4280312,
+    "line": "    alpha coverage: 99.1%"
+  },
+  {
+    "t": 1776520751.4280329,
+    "line": "  Rendering camera 3/15..."
+  },
+  {
+    "t": 1776520751.428034,
+    "line": "    alpha coverage: 99.0%"
+  },
+  {
+    "t": 1776520751.4280355,
+    "line": "  Rendering camera 4/15..."
+  },
+  {
+    "t": 1776520751.428037,
+    "line": "    alpha coverage: 99.0%"
+  },
+  {
+    "t": 1776520751.4280381,
+    "line": "  Rendering camera 5/15..."
+  },
+  {
+    "t": 1776520751.4280393,
+    "line": "    alpha coverage: 99.0%"
+  },
+  {
+    "t": 1776520751.4280407,
+    "line": "  Rendering camera 6/15..."
+  },
+  {
+    "t": 1776520751.428042,
+    "line": "    alpha coverage: 98.9%"
+  },
+  {
+    "t": 1776520751.4280434,
+    "line": "  Rendering camera 7/15..."
+  },
+  {
+    "t": 1776520751.4280446,
+    "line": "    alpha coverage: 99.2%"
+  },
+  {
+    "t": 1776520751.4280455,
+    "line": "  Rendering camera 8/15..."
+  },
+  {
+    "t": 1776520751.428047,
+    "line": "    alpha coverage: 99.7%"
+  },
+  {
+    "t": 1776520751.4280596,
+    "line": "  Rendering camera 9/15..."
+  },
+  {
+    "t": 1776520751.428061,
+    "line": "    alpha coverage: 99.9%"
+  },
+  {
+    "t": 1776520751.428062,
+    "line": "  Rendering camera 10/15..."
+  },
+  {
+    "t": 1776520751.4280636,
+    "line": "    alpha coverage: 99.9%"
+  },
+  {
+    "t": 1776520751.428073,
+    "line": "  Rendering camera 11/15..."
+  },
+  {
+    "t": 1776520751.4280748,
+    "line": "    alpha coverage: 99.9%"
+  },
+  {
+    "t": 1776520751.4280765,
+    "line": "  Rendering camera 12/15..."
+  },
+  {
+    "t": 1776520751.4280787,
+    "line": "    alpha coverage: 99.6%"
+  },
+  {
+    "t": 1776520751.4280803,
+    "line": "  Rendering camera 13/15..."
+  },
+  {
+    "t": 1776520751.4280815,
+    "line": "    alpha coverage: 99.5%"
+  },
+  {
+    "t": 1776520751.428083,
+    "line": "  Rendering camera 14/15..."
+  },
+  {
+    "t": 1776520751.4280844,
+    "line": "    alpha coverage: 99.0%"
+  },
+  {
+    "t": 1776520751.428086,
+    "line": "  Rendering camera 15/15..."
+  },
+  {
+    "t": 1776520751.4280877,
+    "line": "    alpha coverage: 99.0%"
+  },
+  {
+    "t": 1776520751.4280894,
+    "line": "Saved 15 camera views."
+  },
+  {
+    "t": 1776520751.4280918,
+    "line": "Saved renders_grid.png in session_20260418_192903"
+  },
+  {
+    "t": 1776520776.7793415,
+    "line": "Select camera index (1-15): /home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/transformers/models/owlv2/processing_owlv2.py:213: FutureWarning: `post_process_object_detection` method is deprecated for OwlVitProcessor and will be removed in v5. Use `post_process_grounded_object_detection` instead."
+  },
+  {
+    "t": 1776520776.7793734,
+    "line": "  warnings.warn("
+  },
+  {
+    "t": 1776520779.7577055,
+    "line": "Saved selected view as selected_camera_view.png (camera 11) in session_20260418_192903"
+  },
+  {
+    "t": 1776520779.7577322,
+    "line": "Saved selected camera metadata to session_20260418_192903/selected_camera_state.pt"
+  },
+  {
+    "t": 1776520779.7577372,
+    "line": "No OBJ path provided, generating OBJ from prompt."
+  },
+  {
+    "t": 1776520779.7577398,
+    "line": "Gemini request succeeded with model: gemini-2.5-flash-image"
+  },
+  {
+    "t": 1776520779.7577636,
+    "line": "Gemini edited image saved to session_20260418_192903/gemini_diffusion_added.png (mime=image/png, size=1280x720)"
+  },
+  {
+    "t": 1776520779.7577665,
+    "line": ""
+  },
+  {
+    "t": 1776520779.757769,
+    "line": "--- Object Detection & Highlighting ---"
+  },
+  {
+    "t": 1776520779.7577717,
+    "line": "Detected via owlv2: class=unchanged, query='no added object, keep the scene unchanged', conf=0.26, bbox=(3.1976699829101562, 1.64031982421875, 1273.10302734375, 724.6763916015625)"
+  },
+  {
+    "t": 1776520779.7577755,
+    "line": "Generating Gemini object cutout..."
+  },
+  {
+    "t": 1776520779.7577782,
+    "line": "Gemini cutout request succeeded with model: gemini-2.5-flash-image"
+  },
+  {
+    "t": 1776520779.7577808,
+    "line": "Failed to generate OBJ from detected image region: Gemini cutout generation failed: Gemini response did not include an edited image. Response keys: ['candidates', 'usageMetadata', 'modelVersion', 'responseId']. Candidate part keys: [{'candidate': 0, 'parts': [['text']]}]. Use --debug-response-json <path> to inspect full response."
+  }
+]

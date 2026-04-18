@@ -1,0 +1,19 @@
+{
+  "run_label": "existing_001_session_20260418_192903",
+  "returncode": 0,
+  "prompt_id": "session_20260418_192903",
+  "prompt": "[existing session] session_20260418_192903",
+  "target_text": "A real-estate scene with added object",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_192903",
+  "timing": {
+    "run_total_s": null,
+    "placement_total_including_gen_s": null,
+    "placement_total_excluding_gen_s": null,
+    "gemini_total_s": null,
+    "hunyuan_total_s": null,
+    "optimization_total_s": null
+  },
+  "stage_times": {},
+  "eval_pre": null,
+  "eval_post": null
+}

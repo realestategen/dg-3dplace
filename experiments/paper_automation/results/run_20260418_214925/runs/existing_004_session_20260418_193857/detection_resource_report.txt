@@ -1,0 +1,18 @@
+Detection Resource Report
+========================
+Status: Success
+
+| Stage | Time (s) |
+|---|---:|
+| OWLv2 detection | 5.08 |
+| Unprojection & 3D detection | 0.05 |
+| Highlighting & ckpt | 0.61 |
+| Vase integration | 1.16 |
+| Final render | 0.49 |
+| Total | 211.55 |
+
+CPU user time (s): 7.17
+CPU system time (s): 1.57
+Memory usage (MB): 1778.89
+GPU: NVIDIA GeForce RTX 4070 Ti SUPER
+GPU memory used (MB): 601.01

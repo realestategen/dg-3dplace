@@ -1,0 +1,38 @@
+{
+  "run_label": "existing_010_session_20260418_200738",
+  "returncode": 0,
+  "prompt_id": "session_20260418_200738",
+  "prompt": "[existing session] session_20260418_200738",
+  "target_text": "A real-estate scene with added table",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_200738",
+  "timing": {
+    "run_total_s": 175.76,
+    "placement_total_including_gen_s": 175.76,
+    "placement_total_excluding_gen_s": 175.76,
+    "gemini_total_s": null,
+    "hunyuan_total_s": null,
+    "optimization_total_s": null
+  },
+  "stage_times": {
+    "OWLv2 detection": 6.83,
+    "Unprojection & 3D detection": 0.05,
+    "Highlighting & ckpt": 0.6,
+    "Vase integration": 1.17,
+    "Final render": 0.48,
+    "Total": 175.76
+  },
+  "eval_pre": {
+    "clip_directional_similarity": -0.026130368933081627,
+    "clip_text_directional_similarity": 0.003538731951266527,
+    "dino_similarity": 0.960290789604187,
+    "background_ssim": 0.9927228820275892,
+    "errors": {}
+  },
+  "eval_post": {
+    "clip_directional_similarity": -0.026130368933081627,
+    "clip_text_directional_similarity": 0.003538731951266527,
+    "dino_similarity": 0.960290789604187,
+    "background_ssim": 0.9927228820275892,
+    "errors": {}
+  }
+}

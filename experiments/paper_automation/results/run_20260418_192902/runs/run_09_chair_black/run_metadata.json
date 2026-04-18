@@ -1,0 +1,42 @@
+{
+  "run_label": "run_09_chair_black",
+  "returncode": 0,
+  "prompt_id": "chair_black",
+  "prompt": "a black lounge chair near the seating area",
+  "target_text": "A real-estate scene with a black lounge chair",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_200258",
+  "timing": {
+    "run_total_s": 235.4821503162384,
+    "placement_total_including_gen_s": 234.85832571983337,
+    "placement_total_excluding_gen_s": 234.85829424858093,
+    "gemini_total_s": 2.002716064453125e-05,
+    "hunyuan_total_s": 1.1444091796875e-05,
+    "optimization_total_s": null
+  },
+  "stage_times": {
+    "OWLv2 detection": 5.26,
+    "Unprojection & 3D detection": 0.05,
+    "Highlighting & ckpt": 0.66,
+    "Vase integration": 1.14,
+    "Final render": 0.49,
+    "Total": 211.74
+  },
+  "eval_pre": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  },
+  "eval_post": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "run_label": "run_10_table_round",
+  "returncode": 0,
+  "prompt_id": "table_round",
+  "prompt": "a round coffee table beside the seating area",
+  "target_text": "A real-estate scene with a round coffee table",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_200738",
+  "timing": {
+    "run_total_s": 199.31645560264587,
+    "placement_total_including_gen_s": 198.42273998260498,
+    "placement_total_excluding_gen_s": 198.42269945144653,
+    "gemini_total_s": 2.86102294921875e-05,
+    "hunyuan_total_s": 1.1920928955078125e-05,
+    "optimization_total_s": null
+  },
+  "stage_times": {
+    "OWLv2 detection": 6.83,
+    "Unprojection & 3D detection": 0.05,
+    "Highlighting & ckpt": 0.6,
+    "Vase integration": 1.17,
+    "Final render": 0.48,
+    "Total": 175.76
+  },
+  "eval_pre": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  },
+  "eval_post": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  }
+}

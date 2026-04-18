@@ -1,0 +1,42 @@
+{
+  "run_label": "run_06_bench_long",
+  "returncode": 0,
+  "prompt_id": "bench_long",
+  "prompt": "a long minimalist bench near the garden edge",
+  "target_text": "A real-estate scene with a long minimalist bench",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_185252",
+  "timing": {
+    "run_total_s": 232.5308656692505,
+    "placement_total_including_gen_s": 231.65453338623047,
+    "placement_total_excluding_gen_s": 231.65449237823486,
+    "gemini_total_s": 2.6702880859375e-05,
+    "hunyuan_total_s": 1.430511474609375e-05,
+    "optimization_total_s": null
+  },
+  "stage_times": {
+    "OWLv2 detection": 4.67,
+    "Unprojection & 3D detection": 0.05,
+    "Highlighting & ckpt": 0.62,
+    "Vase integration": 1.2,
+    "Final render": 0.48,
+    "Total": 209.77
+  },
+  "eval_pre": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  },
+  "eval_post": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  }
+}

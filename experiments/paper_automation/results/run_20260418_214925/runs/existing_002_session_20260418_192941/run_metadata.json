@@ -1,0 +1,38 @@
+{
+  "run_label": "existing_002_session_20260418_192941",
+  "returncode": 0,
+  "prompt_id": "session_20260418_192941",
+  "prompt": "[existing session] session_20260418_192941",
+  "target_text": "A real-estate scene with added car",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_192941",
+  "timing": {
+    "run_total_s": 216.1,
+    "placement_total_including_gen_s": 216.1,
+    "placement_total_excluding_gen_s": 216.1,
+    "gemini_total_s": null,
+    "hunyuan_total_s": null,
+    "optimization_total_s": null
+  },
+  "stage_times": {
+    "OWLv2 detection": 5.91,
+    "Unprojection & 3D detection": 0.05,
+    "Highlighting & ckpt": 0.6,
+    "Vase integration": 0.82,
+    "Final render": 0.48,
+    "Total": 216.1
+  },
+  "eval_pre": {
+    "clip_directional_similarity": 0.6546415090560913,
+    "clip_text_directional_similarity": 0.28408825397491455,
+    "dino_similarity": 0.5165101289749146,
+    "background_ssim": 0.9775960563447541,
+    "errors": {}
+  },
+  "eval_post": {
+    "clip_directional_similarity": 0.6546415090560913,
+    "clip_text_directional_similarity": 0.28408825397491455,
+    "dino_similarity": 0.5165101289749146,
+    "background_ssim": 0.9775960563447541,
+    "errors": {}
+  }
+}

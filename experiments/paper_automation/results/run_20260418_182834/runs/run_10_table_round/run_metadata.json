@@ -1,0 +1,19 @@
+{
+  "run_label": "run_10_table_round",
+  "returncode": 1,
+  "prompt_id": "table_round",
+  "prompt": "a round coffee table beside the seating area",
+  "target_text": "A real-estate scene with a round coffee table",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_190740",
+  "timing": {
+    "run_total_s": 3.6455981731414795,
+    "placement_total_including_gen_s": null,
+    "placement_total_excluding_gen_s": null,
+    "gemini_total_s": null,
+    "hunyuan_total_s": null,
+    "optimization_total_s": null
+  },
+  "stage_times": {},
+  "eval_pre": null,
+  "eval_post": null
+}

@@ -1,0 +1,42 @@
+{
+  "run_label": "run_07_planter_green",
+  "returncode": 0,
+  "prompt_id": "planter_green",
+  "prompt": "a large green planter with foliage near the front",
+  "target_text": "A real-estate scene with a large green planter",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_195326",
+  "timing": {
+    "run_total_s": 253.60575938224792,
+    "placement_total_including_gen_s": 252.75018286705017,
+    "placement_total_excluding_gen_s": 252.75014925003052,
+    "gemini_total_s": 2.0742416381835938e-05,
+    "hunyuan_total_s": 1.2874603271484375e-05,
+    "optimization_total_s": null
+  },
+  "stage_times": {
+    "OWLv2 detection": 4.94,
+    "Unprojection & 3D detection": 0.05,
+    "Highlighting & ckpt": 0.56,
+    "Vase integration": 1.17,
+    "Final render": 0.48,
+    "Total": 227.26
+  },
+  "eval_pre": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  },
+  "eval_post": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  }
+}

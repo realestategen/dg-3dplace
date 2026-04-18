@@ -1,0 +1,586 @@
+[
+  {
+    "t": 1776522500.3054168,
+    "line": "/home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/torch/utils/cpp_extension.py:2059: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. "
+  },
+  {
+    "t": 1776522500.3054469,
+    "line": "If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST']."
+  },
+  {
+    "t": 1776522500.3054538,
+    "line": "  warnings.warn("
+  },
+  {
+    "t": 1776522500.3062963,
+    "line": ""
+  },
+  {
+    "t": 1776522500.3063107,
+    "line": "--- Unified Pipeline (Single Runtime / Single Session) ---"
+  },
+  {
+    "t": 1776522500.3063188,
+    "line": "1) Generate candidate camera views"
+  },
+  {
+    "t": 1776522500.306325,
+    "line": "2) Choose one camera interactively"
+  },
+  {
+    "t": 1776522500.3063302,
+    "line": "3) Save camera metadata (.pt) inside this session folder"
+  },
+  {
+    "t": 1776522500.3063364,
+    "line": "4) Generate diffusion-added image with Gemini API"
+  },
+  {
+    "t": 1776522500.3063426,
+    "line": "5) Detect object bbox and auto-generate OBJ via 2d_3d.py"
+  },
+  {
+    "t": 1776522500.3063486,
+    "line": "Viewer command after completion: python view_room.py session_20260418_195819/room_with_object.ckpt --port 8080"
+  },
+  {
+    "t": 1776522500.3063562,
+    "line": ""
+  },
+  {
+    "t": 1776522500.3063622,
+    "line": "--- Camera Selection & Rendering ---"
+  },
+  {
+    "t": 1776522500.3063686,
+    "line": "Loading checkpoint..."
+  },
+  {
+    "t": 1776522500.3063745,
+    "line": "  Camera 1: azimuth=0\u00b0, pos=[-0.307  0.353  0.702]"
+  },
+  {
+    "t": 1776522500.3063824,
+    "line": "  Camera 2: azimuth=24\u00b0, pos=[-0.328  0.454  0.702]"
+  },
+  {
+    "t": 1776522500.306389,
+    "line": "  Camera 3: azimuth=48\u00b0, pos=[-0.389  0.538  0.702]"
+  },
+  {
+    "t": 1776522500.3063955,
+    "line": "  Camera 4: azimuth=72\u00b0, pos=[-0.479  0.59   0.702]"
+  },
+  {
+    "t": 1776522500.3064015,
+    "line": "  Camera 5: azimuth=96\u00b0, pos=[-0.582  0.601  0.702]"
+  },
+  {
+    "t": 1776522500.306408,
+    "line": "  Camera 6: azimuth=120\u00b0, pos=[-0.681  0.569  0.702]"
+  },
+  {
+    "t": 1776522500.3064144,
+    "line": "  Camera 7: azimuth=144\u00b0, pos=[-0.758  0.499  0.702]"
+  },
+  {
+    "t": 1776522500.3064208,
+    "line": "  Camera 8: azimuth=168\u00b0, pos=[-0.8    0.405  0.702]"
+  },
+  {
+    "t": 1776522500.3064272,
+    "line": "  Camera 9: azimuth=192\u00b0, pos=[-0.8    0.301  0.702]"
+  },
+  {
+    "t": 1776522500.306433,
+    "line": "  Camera 10: azimuth=216\u00b0, pos=[-0.758  0.206  0.702]"
+  },
+  {
+    "t": 1776522500.3064396,
+    "line": "  Camera 11: azimuth=240\u00b0, pos=[-0.681  0.137  0.702]"
+  },
+  {
+    "t": 1776522500.306446,
+    "line": "  Camera 12: azimuth=264\u00b0, pos=[-0.582  0.105  0.702]"
+  },
+  {
+    "t": 1776522500.3064523,
+    "line": "  Camera 13: azimuth=288\u00b0, pos=[-0.479  0.116  0.702]"
+  },
+  {
+    "t": 1776522500.3064585,
+    "line": "  Camera 14: azimuth=312\u00b0, pos=[-0.389  0.168  0.702]"
+  },
+  {
+    "t": 1776522500.306473,
+    "line": "  Camera 15: azimuth=336\u00b0, pos=[-0.328  0.251  0.702]"
+  },
+  {
+    "t": 1776522500.3064802,
+    "line": "Generated 15 cameras around scene center"
+  },
+  {
+    "t": 1776522500.306487,
+    "line": "  Rendering camera 1/15..."
+  },
+  {
+    "t": 1776522507.6453073,
+    "line": "    alpha coverage: 98.8%"
+  },
+  {
+    "t": 1776522507.6453342,
+    "line": "  Rendering camera 2/15..."
+  },
+  {
+    "t": 1776522507.64534,
+    "line": "    alpha coverage: 99.1%"
+  },
+  {
+    "t": 1776522507.6453424,
+    "line": "  Rendering camera 3/15..."
+  },
+  {
+    "t": 1776522507.6453447,
+    "line": "    alpha coverage: 99.0%"
+  },
+  {
+    "t": 1776522507.6453476,
+    "line": "  Rendering camera 4/15..."
+  },
+  {
+    "t": 1776522507.6453502,
+    "line": "    alpha coverage: 99.0%"
+  },
+  {
+    "t": 1776522507.6453533,
+    "line": "  Rendering camera 5/15..."
+  },
+  {
+    "t": 1776522507.6453557,
+    "line": "    alpha coverage: 99.0%"
+  },
+  {
+    "t": 1776522507.645358,
+    "line": "  Rendering camera 6/15..."
+  },
+  {
+    "t": 1776522507.6453612,
+    "line": "    alpha coverage: 98.9%"
+  },
+  {
+    "t": 1776522507.6453764,
+    "line": "  Rendering camera 7/15..."
+  },
+  {
+    "t": 1776522507.645379,
+    "line": "    alpha coverage: 99.2%"
+  },
+  {
+    "t": 1776522507.645382,
+    "line": "  Rendering camera 8/15..."
+  },
+  {
+    "t": 1776522507.645384,
+    "line": "    alpha coverage: 99.7%"
+  },
+  {
+    "t": 1776522507.645387,
+    "line": "  Rendering camera 9/15..."
+  },
+  {
+    "t": 1776522507.6453893,
+    "line": "    alpha coverage: 99.9%"
+  },
+  {
+    "t": 1776522507.6453917,
+    "line": "  Rendering camera 10/15..."
+  },
+  {
+    "t": 1776522507.6453948,
+    "line": "    alpha coverage: 99.9%"
+  },
+  {
+    "t": 1776522507.6453972,
+    "line": "  Rendering camera 11/15..."
+  },
+  {
+    "t": 1776522507.6453998,
+    "line": "    alpha coverage: 99.9%"
+  },
+  {
+    "t": 1776522507.6454022,
+    "line": "  Rendering camera 12/15..."
+  },
+  {
+    "t": 1776522507.6454062,
+    "line": "    alpha coverage: 99.6%"
+  },
+  {
+    "t": 1776522507.6454093,
+    "line": "  Rendering camera 13/15..."
+  },
+  {
+    "t": 1776522507.6454117,
+    "line": "    alpha coverage: 99.5%"
+  },
+  {
+    "t": 1776522507.645414,
+    "line": "  Rendering camera 14/15..."
+  },
+  {
+    "t": 1776522507.6454165,
+    "line": "    alpha coverage: 99.0%"
+  },
+  {
+    "t": 1776522507.6454184,
+    "line": "  Rendering camera 15/15..."
+  },
+  {
+    "t": 1776522507.6454208,
+    "line": "    alpha coverage: 99.0%"
+  },
+  {
+    "t": 1776522507.6454232,
+    "line": "Saved 15 camera views."
+  },
+  {
+    "t": 1776522507.6454256,
+    "line": "Saved renders_grid.png in session_20260418_195819"
+  },
+  {
+    "t": 1776522531.8525162,
+    "line": "Select camera index (1-15): /home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/transformers/models/owlv2/processing_owlv2.py:213: FutureWarning: `post_process_object_detection` method is deprecated for OwlVitProcessor and will be removed in v5. Use `post_process_grounded_object_detection` instead."
+  },
+  {
+    "t": 1776522531.8525457,
+    "line": "  warnings.warn("
+  },
+  {
+    "t": 1776522727.6950257,
+    "line": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/detection_optimized.py:681: DeprecationWarning: 'mode' parameter is deprecated and will be removed in Pillow 13 (2026-10-15)"
+  },
+  {
+    "t": 1776522727.6950505,
+    "line": "  Image.fromarray((cutout_mask.astype(np.uint8) * 255), mode=\"L\").resize((tw, th), Image.NEAREST),"
+  },
+  {
+    "t": 1776522727.6951995,
+    "line": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/detection_optimized.py:688: DeprecationWarning: 'mode' parameter is deprecated and will be removed in Pillow 13 (2026-10-15)"
+  },
+  {
+    "t": 1776522727.6952107,
+    "line": "  Image.fromarray((cutout_gray * 255).astype(np.uint8), mode=\"L\").resize((tw, th), Image.BILINEAR),"
+  },
+  {
+    "t": 1776522727.8111572,
+    "line": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/detection_optimized.py:600: DeprecationWarning: 'mode' parameter is deprecated and will be removed in Pillow 13 (2026-10-15)"
+  },
+  {
+    "t": 1776522727.811173,
+    "line": "  Image.fromarray(mask_u8, mode=\"L\").save(output_path)"
+  },
+  {
+    "t": 1776522733.972518,
+    "line": "Saved selected view as selected_camera_view.png (camera 3) in session_20260418_195819"
+  },
+  {
+    "t": 1776522733.9725404,
+    "line": "Saved selected camera metadata to session_20260418_195819/selected_camera_state.pt"
+  },
+  {
+    "t": 1776522733.972545,
+    "line": "No OBJ path provided, generating OBJ from prompt."
+  },
+  {
+    "t": 1776522733.9725478,
+    "line": "Gemini request succeeded with model: gemini-2.5-flash-image"
+  },
+  {
+    "t": 1776522733.9725504,
+    "line": "Gemini edited image saved to session_20260418_195819/gemini_diffusion_added.png (mime=image/png, size=1280x720)"
+  },
+  {
+    "t": 1776522733.9725533,
+    "line": ""
+  },
+  {
+    "t": 1776522733.9725552,
+    "line": "--- Object Detection & Highlighting ---"
+  },
+  {
+    "t": 1776522733.9725583,
+    "line": "Detected via owlv2: class=chair, query='a photo of a white lounge chair near the right side', conf=0.59, bbox=(733.7027587890625, 447.04779052734375, 1129.7752685546875, 644.4469604492188)"
+  },
+  {
+    "t": 1776522733.9725611,
+    "line": "Generating Gemini object cutout..."
+  },
+  {
+    "t": 1776522733.9725635,
+    "line": "Gemini cutout request succeeded with model: gemini-2.5-flash-image"
+  },
+  {
+    "t": 1776522733.9725657,
+    "line": "Gemini object cutout saved to session_20260418_195819/gemini_object_cutout.png (mime=image/png, size=512x512)"
+  },
+  {
+    "t": 1776522733.9725685,
+    "line": "\u2713 Gemini cutout saved to: session_20260418_195819/gemini_object_cutout.png"
+  },
+  {
+    "t": 1776522733.972573,
+    "line": "Running Hunyuan3D step1 (shape generation)..."
+  },
+  {
+    "t": 1776522733.9725752,
+    "line": "\u2713 Untextured mesh generated: session_20260418_195819/generated_object.obj"
+  },
+  {
+    "t": 1776522733.9725778,
+    "line": "Running Hunyuan3D step2 (texture painting)..."
+  },
+  {
+    "t": 1776522733.9725807,
+    "line": "Step2 OOM at views=9, resolution=512; retrying with lower memory settings..."
+  },
+  {
+    "t": 1776522733.9725828,
+    "line": "Step2 recovered with reduced settings: views=6, resolution=384"
+  },
+  {
+    "t": 1776522733.972586,
+    "line": "\u2713 Painted mesh completed in: /home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_195819"
+  },
+  {
+    "t": 1776522733.9725897,
+    "line": "\u2713 Color mesh selected: /home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_195819/textured_mesh.glb"
+  },
+  {
+    "t": 1776522733.9725926,
+    "line": "Generated object OBJ: session_20260418_195819/generated_object.obj"
+  },
+  {
+    "t": 1776522733.9725952,
+    "line": "Using textured mesh for colors: /home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_195819/textured_mesh.glb"
+  },
+  {
+    "t": 1776522733.9725978,
+    "line": "Generated textured mesh: /home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_195819/textured_mesh.obj"
+  },
+  {
+    "t": 1776522733.9726002,
+    "line": "Generated MTL: /home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_195819/textured_mesh.mtl"
+  },
+  {
+    "t": 1776522733.9726028,
+    "line": "Generated albedo texture: /home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_195819/textured_mesh_roughness.jpg"
+  },
+  {
+    "t": 1776522733.9726052,
+    "line": "Saved Gemini cutout PNG: session_20260418_195819/gemini_object_cutout.png"
+  },
+  {
+    "t": 1776522733.9726074,
+    "line": "Saved chair_detection_bbox.png in session_20260418_195819"
+  },
+  {
+    "t": 1776522733.9726095,
+    "line": "Saved added object mask (black/white): session_20260418_195819/added_object_mask.png"
+  },
+  {
+    "t": 1776522733.972612,
+    "line": "Using selected camera 3 from session_20260418_195819/selected_camera_state.pt"
+  },
+  {
+    "t": 1776522733.9726136,
+    "line": "Gaussians in chair bbox: 3,608 / 1,228,616"
+  },
+  {
+    "t": 1776522733.9726157,
+    "line": "Saved: room_with_chair_highlighted.ckpt (red highlight only) in session_20260418_195819"
+  },
+  {
+    "t": 1776522733.972618,
+    "line": "Saved chair_highlighted_verification.png in session_20260418_195819"
+  },
+  {
+    "t": 1776522733.9726253,
+    "line": ""
+  },
+  {
+    "t": 1776522733.9726264,
+    "line": "--- Generating and integrating chair gaussians from textured mesh ---"
+  },
+  {
+    "t": 1776522733.972628,
+    "line": "Target region center: [-1.1978654   0.49479753 -0.6337499 ], extent: [1.0684032  0.8291747  0.36604178], scale (clamped): 0.8291746973991394"
+  },
+  {
+    "t": 1776522733.972631,
+    "line": "Scene means min: [-14.094743   -7.557421   -1.3557323], max: [ 7.727466 12.538876  8.219224], center: [-0.55202204  0.35104045  0.40364137]"
+  },
+  {
+    "t": 1776522733.9726334,
+    "line": "Generated 100000 textured object gaussians from GLB pipeline."
+  },
+  {
+    "t": 1776522733.9726357,
+    "line": "Gaussians before: 1228616, after: 1328616 (added 100000)"
+  },
+  {
+    "t": 1776522733.9726377,
+    "line": "Object gaussians generated and integrated. Saved to session_20260418_195819/room_with_object.ckpt"
+  },
+  {
+    "t": 1776522733.97264,
+    "line": ""
+  },
+  {
+    "t": 1776522733.9726417,
+    "line": "--- Rendering Final View with Object ---"
+  },
+  {
+    "t": 1776522733.9726436,
+    "line": "Saved final view (with object) to: session_20260418_195819/final_view_with_object.png"
+  },
+  {
+    "t": 1776522733.9726453,
+    "line": "[!] Failed to import optimization modules: No module named 'lpips'"
+  },
+  {
+    "t": 1776522733.9726474,
+    "line": ""
+  },
+  {
+    "t": 1776522733.972649,
+    "line": "--- Running Post-Placement Optimization ---"
+  },
+  {
+    "t": 1776522733.9726512,
+    "line": "Using checkpoint: session_20260418_195819/room_with_object.ckpt"
+  },
+  {
+    "t": 1776522733.9726534,
+    "line": "Using camera state: session_20260418_195819/selected_camera_state.pt"
+  },
+  {
+    "t": 1776522733.9726553,
+    "line": "Using target image: session_20260418_195819/gemini_diffusion_added.png"
+  },
+  {
+    "t": 1776522733.9726574,
+    "line": "Using mask image: session_20260418_195819/added_object_mask.png"
+  },
+  {
+    "t": 1776522733.9726593,
+    "line": "Object gaussian count for split: 100000"
+  },
+  {
+    "t": 1776522733.9726615,
+    "line": "Running optimization via conda env: dg3d_optimize"
+  },
+  {
+    "t": 1776522733.972664,
+    "line": "/home/cse_g2/RealEstateGen/DG-3DPlace/DG_3DPlace_Optimization/src/utils/camera_utils.py:62: FutureWarning: You are using `torch.load` with `weights_only=False` (the current default value), which uses the default pickle module implicitly. It is possible to construct malicious pickle data which will execute arbitrary code during unpickling (See https://github.com/pytorch/pytorch/blob/main/SECURITY.md#untrusted-models for more details). In a future release, the default value for `weights_only` will be flipped to `True`. This limits the functions that could be executed during unpickling. Arbitrary objects will no longer be allowed to be loaded via this mode unless they are explicitly allowlisted by the user via `torch.serialization.add_safe_globals`. We recommend you start setting `weights_only=True` for any use case where you don't have full control of the loaded file. Please open an issue on GitHub for any issues related to this experimental feature."
+  },
+  {
+    "t": 1776522733.9726708,
+    "line": "  data_dict = torch.load(filepath, map_location=device)"
+  },
+  {
+    "t": 1776522733.9726727,
+    "line": "Traceback (most recent call last):"
+  },
+  {
+    "t": 1776522733.9726748,
+    "line": "  File \"<string>\", line 8, in <module>"
+  },
+  {
+    "t": 1776522733.9726765,
+    "line": "TypeError: run_refinement() got an unexpected keyword argument 'num_object_gaussians'"
+  },
+  {
+    "t": 1776522733.972679,
+    "line": ""
+  },
+  {
+    "t": 1776522733.9726834,
+    "line": "ERROR conda.cli.main_run:execute(127): `conda run python -c import os, sys"
+  },
+  {
+    "t": 1776522733.9726856,
+    "line": "optimization_root = '/home/cse_g2/RealEstateGen/DG-3DPlace/DG_3DPlace_Optimization'"
+  },
+  {
+    "t": 1776522733.972688,
+    "line": "if optimization_root not in sys.path:"
+  },
+  {
+    "t": 1776522733.97269,
+    "line": "    sys.path.insert(0, optimization_root)"
+  },
+  {
+    "t": 1776522733.9726923,
+    "line": "from run_refinement import run_refinement"
+  },
+  {
+    "t": 1776522733.9726942,
+    "line": "from src.utils.camera_utils import load_scout_camera"
+  },
+  {
+    "t": 1776522733.9726963,
+    "line": "camera = load_scout_camera('session_20260418_195819/selected_camera_state.pt')"
+  },
+  {
+    "t": 1776522733.9726985,
+    "line": "run_refinement("
+  },
+  {
+    "t": 1776522733.9727004,
+    "line": "    ckpt_path='session_20260418_195819/room_with_object.ckpt',"
+  },
+  {
+    "t": 1776522733.9727023,
+    "line": "    target_img_path='session_20260418_195819/gemini_diffusion_added.png',"
+  },
+  {
+    "t": 1776522733.9727042,
+    "line": "    mask_path='session_20260418_195819/added_object_mask.png',"
+  },
+  {
+    "t": 1776522733.9727063,
+    "line": "    num_object_gaussians=100000,"
+  },
+  {
+    "t": 1776522733.972708,
+    "line": "    scout_camera_data=camera,"
+  },
+  {
+    "t": 1776522733.9727101,
+    "line": "    output_path='session_20260418_195819/room_with_object_optimized.ckpt',"
+  },
+  {
+    "t": 1776522733.972712,
+    "line": ")"
+  },
+  {
+    "t": 1776522733.9727137,
+    "line": "` failed. (See above for error)"
+  },
+  {
+    "t": 1776522733.972717,
+    "line": "[!] Conda-env optimization failed (dg3d_optimize): conda optimization process failed with code 1"
+  },
+  {
+    "t": 1776522733.9727194,
+    "line": "[!] Falling back to current runtime environment for optimization."
+  },
+  {
+    "t": 1776522733.9727213,
+    "line": "[!] Optimization modules unavailable in current runtime; skipping optimization."
+  },
+  {
+    "t": 1776522733.9727235,
+    "line": "Resource report saved to session_20260418_195819/detection_resource_report.txt"
+  }
+]

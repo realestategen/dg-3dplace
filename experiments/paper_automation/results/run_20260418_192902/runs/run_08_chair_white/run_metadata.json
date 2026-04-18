@@ -1,0 +1,42 @@
+{
+  "run_label": "run_08_chair_white",
+  "returncode": 0,
+  "prompt_id": "chair_white",
+  "prompt": "a white lounge chair near the right side",
+  "target_text": "A real-estate scene with a white lounge chair",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_195819",
+  "timing": {
+    "run_total_s": 236.7264528274536,
+    "placement_total_including_gen_s": 235.85789465904236,
+    "placement_total_excluding_gen_s": 235.8578643798828,
+    "gemini_total_s": 1.7404556274414062e-05,
+    "hunyuan_total_s": 1.2874603271484375e-05,
+    "optimization_total_s": null
+  },
+  "stage_times": {
+    "OWLv2 detection": 5.33,
+    "Unprojection & 3D detection": 0.05,
+    "Highlighting & ckpt": 0.58,
+    "Vase integration": 1.17,
+    "Final render": 0.47,
+    "Total": 207.66
+  },
+  "eval_pre": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  },
+  "eval_post": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  }
+}

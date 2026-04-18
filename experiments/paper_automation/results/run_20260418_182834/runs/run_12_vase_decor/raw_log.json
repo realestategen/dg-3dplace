@@ -1,0 +1,226 @@
+[
+  {
+    "t": 1776519467.0182116,
+    "line": "/home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/torch/utils/cpp_extension.py:2059: UserWarning: TORCH_CUDA_ARCH_LIST is not set, all archs for visible cards are included for compilation. "
+  },
+  {
+    "t": 1776519467.0182388,
+    "line": "If this is not desired, please set os.environ['TORCH_CUDA_ARCH_LIST']."
+  },
+  {
+    "t": 1776519467.018245,
+    "line": "  warnings.warn("
+  },
+  {
+    "t": 1776519467.018757,
+    "line": ""
+  },
+  {
+    "t": 1776519467.018768,
+    "line": "--- Unified Pipeline (Single Runtime / Single Session) ---"
+  },
+  {
+    "t": 1776519467.0187747,
+    "line": "1) Generate candidate camera views"
+  },
+  {
+    "t": 1776519467.01878,
+    "line": "2) Choose one camera interactively"
+  },
+  {
+    "t": 1776519467.018784,
+    "line": "3) Save camera metadata (.pt) inside this session folder"
+  },
+  {
+    "t": 1776519467.0187883,
+    "line": "4) Generate diffusion-added image with Gemini API"
+  },
+  {
+    "t": 1776519467.018793,
+    "line": "5) Detect object bbox and auto-generate OBJ via 2d_3d.py"
+  },
+  {
+    "t": 1776519467.0187979,
+    "line": "Viewer command after completion: python view_room.py session_20260418_190746/room_with_object.ckpt --port 8080"
+  },
+  {
+    "t": 1776519467.0188034,
+    "line": ""
+  },
+  {
+    "t": 1776519467.0188081,
+    "line": "--- Camera Selection & Rendering ---"
+  },
+  {
+    "t": 1776519467.0188131,
+    "line": "Loading checkpoint..."
+  },
+  {
+    "t": 1776519467.018818,
+    "line": "  Camera 1: azimuth=0\u00b0, pos=[-0.307  0.353  0.702]"
+  },
+  {
+    "t": 1776519467.0188236,
+    "line": "  Camera 2: azimuth=24\u00b0, pos=[-0.328  0.454  0.702]"
+  },
+  {
+    "t": 1776519467.0188284,
+    "line": "  Camera 3: azimuth=48\u00b0, pos=[-0.389  0.538  0.702]"
+  },
+  {
+    "t": 1776519467.0188327,
+    "line": "  Camera 4: azimuth=72\u00b0, pos=[-0.479  0.59   0.702]"
+  },
+  {
+    "t": 1776519467.0188365,
+    "line": "  Camera 5: azimuth=96\u00b0, pos=[-0.582  0.601  0.702]"
+  },
+  {
+    "t": 1776519467.0188406,
+    "line": "  Camera 6: azimuth=120\u00b0, pos=[-0.681  0.569  0.702]"
+  },
+  {
+    "t": 1776519467.0188446,
+    "line": "  Camera 7: azimuth=144\u00b0, pos=[-0.758  0.499  0.702]"
+  },
+  {
+    "t": 1776519467.0188487,
+    "line": "  Camera 8: azimuth=168\u00b0, pos=[-0.8    0.405  0.702]"
+  },
+  {
+    "t": 1776519467.0188527,
+    "line": "  Camera 9: azimuth=192\u00b0, pos=[-0.8    0.301  0.702]"
+  },
+  {
+    "t": 1776519467.0188565,
+    "line": "  Camera 10: azimuth=216\u00b0, pos=[-0.758  0.206  0.702]"
+  },
+  {
+    "t": 1776519467.0188608,
+    "line": "  Camera 11: azimuth=240\u00b0, pos=[-0.681  0.137  0.702]"
+  },
+  {
+    "t": 1776519467.018865,
+    "line": "  Camera 12: azimuth=264\u00b0, pos=[-0.582  0.105  0.702]"
+  },
+  {
+    "t": 1776519467.0188694,
+    "line": "  Camera 13: azimuth=288\u00b0, pos=[-0.479  0.116  0.702]"
+  },
+  {
+    "t": 1776519467.0188735,
+    "line": "  Camera 14: azimuth=312\u00b0, pos=[-0.389  0.168  0.702]"
+  },
+  {
+    "t": 1776519467.0188775,
+    "line": "  Camera 15: azimuth=336\u00b0, pos=[-0.328  0.251  0.702]"
+  },
+  {
+    "t": 1776519467.0188816,
+    "line": "Generated 15 cameras around scene center"
+  },
+  {
+    "t": 1776519467.0188873,
+    "line": "  Rendering camera 1/15..."
+  },
+  {
+    "t": 1776519467.1256287,
+    "line": "Traceback (most recent call last):"
+  },
+  {
+    "t": 1776519467.125651,
+    "line": "  File \"/home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/PIL/ImageFile.py\", line 644, in _save"
+  },
+  {
+    "t": 1776519467.1256573,
+    "line": "    fh = fp.fileno()"
+  },
+  {
+    "t": 1776519467.125682,
+    "line": "AttributeError: '_idat' object has no attribute 'fileno'"
+  },
+  {
+    "t": 1776519467.1256857,
+    "line": ""
+  },
+  {
+    "t": 1776519467.1256874,
+    "line": "During handling of the above exception, another exception occurred:"
+  },
+  {
+    "t": 1776519467.1256905,
+    "line": ""
+  },
+  {
+    "t": 1776519467.1256917,
+    "line": "Traceback (most recent call last):"
+  },
+  {
+    "t": 1776519467.125695,
+    "line": "  File \"/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/detection_optimized.py\", line 1432, in <module>"
+  },
+  {
+    "t": 1776519467.1258745,
+    "line": "    select_camera_and_render()"
+  },
+  {
+    "t": 1776519467.1258836,
+    "line": "  File \"/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/detection_optimized.py\", line 275, in select_camera_and_render"
+  },
+  {
+    "t": 1776519467.1258867,
+    "line": "    Image.fromarray((img * 255).astype(np.uint8)).save(os.path.join(SESSION_DIR, f\"camera_view_{i}.png\"))"
+  },
+  {
+    "t": 1776519467.1258888,
+    "line": "  File \"/home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/PIL/Image.py\", line 2588, in save"
+  },
+  {
+    "t": 1776519467.1260517,
+    "line": "    save_handler(self, fp, filename)"
+  },
+  {
+    "t": 1776519467.1260607,
+    "line": "  File \"/home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/PIL/PngImagePlugin.py\", line 1495, in _save"
+  },
+  {
+    "t": 1776519467.1262133,
+    "line": "    ImageFile._save("
+  },
+  {
+    "t": 1776519467.1262224,
+    "line": "  File \"/home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/PIL/ImageFile.py\", line 648, in _save"
+  },
+  {
+    "t": 1776519467.1262255,
+    "line": "    _encode_tile(im, fp, tile, bufsize, None, exc)"
+  },
+  {
+    "t": 1776519467.1262274,
+    "line": "  File \"/home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/PIL/ImageFile.py\", line 675, in _encode_tile"
+  },
+  {
+    "t": 1776519467.1262295,
+    "line": "    fp.write(data)"
+  },
+  {
+    "t": 1776519467.126231,
+    "line": "  File \"/home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/PIL/PngImagePlugin.py\", line 1137, in write"
+  },
+  {
+    "t": 1776519467.126328,
+    "line": "    self.chunk(self.fp, b\"IDAT\", data)"
+  },
+  {
+    "t": 1776519467.126338,
+    "line": "  File \"/home/cse_g2/miniconda3/envs/3dgs/lib/python3.10/site-packages/PIL/PngImagePlugin.py\", line 1124, in putchunk"
+  },
+  {
+    "t": 1776519467.126343,
+    "line": "    fp.write(byte_data)"
+  },
+  {
+    "t": 1776519467.1263447,
+    "line": "OSError: [Errno 28] No space left on device"
+  }
+]

@@ -1,0 +1,42 @@
+{
+  "run_label": "run_02_car_center_red",
+  "returncode": 0,
+  "prompt_id": "car_center_red",
+  "prompt": "a red car parked in the middle of the scene",
+  "target_text": "A real-estate scene with a red car parked in the middle",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_192941",
+  "timing": {
+    "run_total_s": 238.3518283367157,
+    "placement_total_including_gen_s": 237.74422216415405,
+    "placement_total_excluding_gen_s": 237.74418830871582,
+    "gemini_total_s": 1.9311904907226562e-05,
+    "hunyuan_total_s": 1.4543533325195312e-05,
+    "optimization_total_s": null
+  },
+  "stage_times": {
+    "OWLv2 detection": 5.91,
+    "Unprojection & 3D detection": 0.05,
+    "Highlighting & ckpt": 0.6,
+    "Vase integration": 0.82,
+    "Final render": 0.48,
+    "Total": 216.1
+  },
+  "eval_pre": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  },
+  "eval_post": {
+    "clip_directional_similarity": null,
+    "clip_text_directional_similarity": null,
+    "dino_similarity": null,
+    "background_ssim": null,
+    "errors": {
+      "worker": "JSON parse failure: Extra data: line 2 column 1 (char 3)"
+    }
+  }
+}

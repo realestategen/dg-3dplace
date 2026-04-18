@@ -1,0 +1,38 @@
+{
+  "run_label": "existing_011_session_20260418_201137",
+  "returncode": 0,
+  "prompt_id": "session_20260418_201137",
+  "prompt": "[existing session] session_20260418_201137",
+  "target_text": "A real-estate scene with added sofa",
+  "session_dir": "/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260418_201137",
+  "timing": {
+    "run_total_s": 208.51,
+    "placement_total_including_gen_s": 208.51,
+    "placement_total_excluding_gen_s": 208.51,
+    "gemini_total_s": null,
+    "hunyuan_total_s": null,
+    "optimization_total_s": null
+  },
+  "stage_times": {
+    "OWLv2 detection": 5.92,
+    "Unprojection & 3D detection": 0.05,
+    "Highlighting & ckpt": 0.62,
+    "Vase integration": 1.1,
+    "Final render": 0.49,
+    "Total": 208.51
+  },
+  "eval_pre": {
+    "clip_directional_similarity": 0.413100004196167,
+    "clip_text_directional_similarity": -0.03336148336529732,
+    "dino_similarity": 0.9432527422904968,
+    "background_ssim": 0.979734952427119,
+    "errors": {}
+  },
+  "eval_post": {
+    "clip_directional_similarity": 0.413100004196167,
+    "clip_text_directional_similarity": -0.03336148336529732,
+    "dino_similarity": 0.9432527422904968,
+    "background_ssim": 0.979734952427119,
+    "errors": {}
+  }
+}
