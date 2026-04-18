@@ -1,0 +1,12 @@
+# Generated session folders from placement runs
+session_*/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# OS files
+.DS_Store

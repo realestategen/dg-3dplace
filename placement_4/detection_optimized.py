@@ -25,6 +25,7 @@ import importlib
 import subprocess
 import shutil
 import importlib.util
+import inspect
 from gemini_image_gen import generate_diffusion_image_with_gemini
 
 
@@ -1031,7 +1032,7 @@ def add_object_to_scene(
     # Clamp scale to min(X, Y) to avoid oversize
     scale = min(target_extent[0], target_extent[1])
     translation = target_center
-    num_gaussians = 1000000
+    num_gaussians = 100000
     print(f"Target region center: {target_center}, extent: {target_extent}, scale (clamped): {scale}")
     print(f"Scene means min: {means.min(axis=0)}, max: {means.max(axis=0)}, center: {means.mean(axis=0)}")
     mesh_for_color = color_mesh_path or object_obj_path
@@ -1082,6 +1083,8 @@ def add_object_to_scene(
     n_after = state["_model.means"].shape[0]
     num_object_gaussians = int(n_after - n_before)
     print(f"Gaussians before: {n_before}, after: {n_after} (added {n_after-n_before})")
+    # Persist split metadata so optimization can recover exact object/background partition.
+    ckpt["num_object_gaussians"] = int(num_object_gaussians)
     torch.save(ckpt, OUTPUT_PATH)
     print(f"Object gaussians generated and integrated. Saved to {OUTPUT_PATH}")
     t_vase_end = time.time()
@@ -1230,20 +1233,24 @@ def _run_post_placement_optimization_in_conda_env(
 
     launcher_code = (
         "import os, sys\n"
+        "import inspect\n"
         f"optimization_root = {OPTIMIZATION_ROOT!r}\n"
         "if optimization_root not in sys.path:\n"
         "    sys.path.insert(0, optimization_root)\n"
         "from run_refinement import run_refinement\n"
         "from src.utils.camera_utils import load_scout_camera\n"
         f"camera = load_scout_camera({camera_state_path!r})\n"
-        "run_refinement(\n"
+        "kwargs = dict(\n"
         f"    ckpt_path={initial_ckpt_path!r},\n"
         f"    target_img_path={target_img_path!r},\n"
         f"    mask_path={mask_path!r},\n"
-        f"    num_object_gaussians={int(num_object_gaussians)},\n"
         "    scout_camera_data=camera,\n"
         f"    output_path={optimized_output_path!r},\n"
         ")\n"
+        "sig = inspect.signature(run_refinement)\n"
+        "if 'num_object_gaussians' in sig.parameters:\n"
+        f"    kwargs['num_object_gaussians'] = {int(num_object_gaussians)}\n"
+        "run_refinement(**kwargs)\n"
     )
 
     cmd = [
@@ -1329,14 +1336,16 @@ def run_post_placement_optimization(initial_ckpt_path, camera_state_path, sessio
                 print("[!] Optimization modules unavailable in current runtime; skipping optimization.")
                 return None
             real_camera = load_scout_camera(camera_state_path)
-            run_refinement(
-                ckpt_path=initial_ckpt_path,
-                target_img_path=target_img_path,
-                mask_path=mask_path,
-                num_object_gaussians=int(num_object_gaussians),
-                scout_camera_data=real_camera,
-                output_path=optimized_output_path,
-            )
+            refinement_kwargs = {
+                "ckpt_path": initial_ckpt_path,
+                "target_img_path": target_img_path,
+                "mask_path": mask_path,
+                "scout_camera_data": real_camera,
+                "output_path": optimized_output_path,
+            }
+            if "num_object_gaussians" in inspect.signature(run_refinement).parameters:
+                refinement_kwargs["num_object_gaussians"] = int(num_object_gaussians)
+            run_refinement(**refinement_kwargs)
 
         if not os.path.exists(optimized_output_path):
             print(f"[!] Optimization did not produce expected output: {optimized_output_path}")

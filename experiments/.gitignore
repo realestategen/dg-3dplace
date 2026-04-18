@@ -1,0 +1,14 @@
+# Generated results and runs from paper automation
+paper_automation/results/
+results/
+runs/
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# OS files
+.DS_Store
