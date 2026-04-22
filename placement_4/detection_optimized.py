@@ -1044,17 +1044,69 @@ def add_object_to_scene(
         print(f"Textured GLB not found; got '{mesh_for_color}'. Falling back to previous path may reduce color fidelity.")
 
     try:
-        object_gaussians = glb_to_gaussians(
-            glb_path=mesh_for_color,
-            num_gaussians=num_gaussians,
-            target_scale=float(scale),
-            scale_factor=0.4,
-            rotation=None,
-            translation=translation,
-            opacity_logit=5.0,
-            run_render_colmap=True,
-            work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        native_train_script_path = os.path.join(script_dir, "train_object_gs_native.py")
+        user_train_template = os.environ.get("OBJECT_GS_TRAIN_CMD_TEMPLATE", "").strip()
+        train_num_gaussians = int(os.environ.get("OBJECT_GS_TRAIN_NUM_GAUSSIANS", "30000"))
+        train_num_gaussians = max(20000, min(50000, train_num_gaussians))
+        trainer_cmd_template = user_train_template or (
+            f"python {native_train_script_path} --mesh {{mesh_path}} --images {{images_dir}} "
+            f"--camera-json {{camera_json}} --sparse {{sparse_dir}} --output {{output_dir}} "
+            f"--steps {{steps}} --num-gaussians {train_num_gaussians}"
         )
+
+        use_train_mode = True
+
+        if use_train_mode:
+            try:
+                object_gaussians = glb_to_gaussians(
+                    glb_path=mesh_for_color,
+                    num_gaussians=num_gaussians,
+                    target_scale=float(scale),
+                    scale_factor=0.4,
+                    rotation=None,
+                    translation=translation,
+                    opacity_logit=5.0,
+                    run_render_colmap=True,
+                    work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
+                    conversion_mode="train",
+                    blender_exe=os.environ.get("BLENDER_EXE", "").strip() or None,
+                    colmap_exe=os.environ.get("COLMAP_EXE", "").strip() or None,
+                    trainer_cmd_template=trainer_cmd_template,
+                    num_views=int(os.environ.get("OBJECT_GS_NUM_VIEWS", "48")),
+                    render_size=int(os.environ.get("OBJECT_GS_RENDER_SIZE", "768")),
+                    train_steps=int(os.environ.get("OBJECT_GS_TRAIN_STEPS", "3000")),
+                )
+                print("Using train-mode GLB->GS conversion.")
+            except Exception as train_err:
+                print(f"[!] Train-mode conversion failed: {train_err}")
+                print("[!] Falling back to sample-mode conversion.")
+                object_gaussians = glb_to_gaussians(
+                    glb_path=mesh_for_color,
+                    num_gaussians=num_gaussians,
+                    target_scale=float(scale),
+                    scale_factor=0.4,
+                    rotation=None,
+                    translation=translation,
+                    opacity_logit=5.0,
+                    run_render_colmap=False,
+                    work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
+                    conversion_mode="sample",
+                )
+        else:
+            object_gaussians = glb_to_gaussians(
+                glb_path=mesh_for_color,
+                num_gaussians=num_gaussians,
+                target_scale=float(scale),
+                scale_factor=0.4,
+                rotation=None,
+                translation=translation,
+                opacity_logit=5.0,
+                run_render_colmap=False,
+                work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
+                conversion_mode="sample",
+            )
+
         means_object = object_gaussians["means"]
         scales_object = object_gaussians["scales"]
         quats_object = object_gaussians["quats"]
