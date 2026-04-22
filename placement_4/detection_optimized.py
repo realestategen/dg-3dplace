@@ -52,7 +52,7 @@ def _load_glb_to_gaussians():
 generate_obj_from_prompt_image = _load_generate_obj_from_prompt_image()
 glb_to_gaussians = _load_glb_to_gaussians()
 
-CKPT_PATH = "bench_park.ckpt"
+CKPT_PATH = "ckpt/bench_park.ckpt"
 RENDER_W, RENDER_H = 1280, 720
 NUM_CAMERAS = 15
 FOV_DEG = 60.0
@@ -1429,7 +1429,7 @@ This script is split into two main functions:
 # Entry point
 # ══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
-    import sys
+    import argparse
     print("\n--- Unified Pipeline (Single Runtime / Single Session) ---")
     print("1) Generate candidate camera views")
     print("2) Choose one camera interactively")
@@ -1438,10 +1438,25 @@ if __name__ == "__main__":
     print("5) Detect object bbox and auto-generate OBJ via 2d_3d.py")
     print(f"Viewer command after completion: python view_room.py {OUTPUT_PATH} --port 8080")
 
+    parser = argparse.ArgumentParser(description="Run the 3D placement pipeline.")
+    parser.add_argument(
+        "object_prompt",
+        nargs="?",
+        help="Rich edit prompt for the object to add.",
+    )
+    parser.add_argument(
+        "--ckpt-path",
+        default=CKPT_PATH,
+        help=f"Input checkpoint path to load (default: {CKPT_PATH}).",
+    )
+    args = parser.parse_args()
+
+    CKPT_PATH = args.ckpt_path
+
     select_camera_and_render()
 
-    if len(sys.argv) == 2:
-        object_prompt = sys.argv[1]
+    if args.object_prompt:
+        object_prompt = args.object_prompt
     else:
         object_prompt = input("Enter rich edit prompt (e.g. 'a red car near the bench'): ").strip()
     object_obj_path = None
