@@ -46,10 +46,6 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
     camera.camera_center = torch.inverse(w2c)[0:3, 3].contiguous()
 
     bg_color = torch.tensor([0, 0, 0], dtype=torch.float32, device=device)
-    
-    # ==========================================
-    # [1] SETUP RASTERIZERS GLOBALLY
-    # ==========================================
     sh_degree = 3 if 'features_rest' in bg_gaussians else 0
     
     rgb_raster_settings = GaussianRasterizationSettings(
@@ -84,32 +80,22 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
     )
     mask_rasterizer = GaussianRasterizer(raster_settings=mask_raster_settings)
 
-    # 2. Setup Modules
     pose_model = PoseOptimizer(device=device)
     loss_module = RefinementLoss(device=device)
     
-    # ==========================================
-    # [2] LOCK INITIAL POSITION
-    # ==========================================
     with torch.no_grad():
         true_initial_center = obj_gaussians['means'].mean(dim=0)
         pose_model.obj_center = true_initial_center.clone()
         pose_model.translation.copy_(true_initial_center)
-        print(f"[*] Object locked at its original .ckpt position: {true_initial_center}")
-    # ==========================================
 
-    # ==========================================
-    # [3] GENERALIZED AUTO-ALIGN (Grid Search)
-    # ==========================================
     print("[*] Running Generalized Auto-Align to find best starting rotation...")
-    
     test_quats = [
-        torch.tensor([1.0, 0.0, 0.0, 0.0], device=device),     # Original
-        torch.tensor([0.707, 0.707, 0.0, 0.0], device=device), # +90 deg X
-        torch.tensor([0.707, -0.707, 0.0, 0.0], device=device),# -90 deg X
-        torch.tensor([0.707, 0.0, 0.707, 0.0], device=device), # +90 deg Y
-        torch.tensor([0.707, 0.0, -0.707, 0.0], device=device),# -90 deg Y
-        torch.tensor([0.707, 0.0, 0.0, 0.707], device=device)  # +90 deg Z
+        torch.tensor([1.0, 0.0, 0.0, 0.0], device=device),     
+        torch.tensor([0.707, 0.707, 0.0, 0.0], device=device), 
+        torch.tensor([0.707, -0.707, 0.0, 0.0], device=device),
+        torch.tensor([0.707, 0.0, 0.707, 0.0], device=device), 
+        torch.tensor([0.707, 0.0, -0.707, 0.0], device=device),
+        torch.tensor([0.707, 0.0, 0.0, 0.707], device=device)  
     ]
     
     best_initial_loss = float('inf')
@@ -146,12 +132,12 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
                 best_quat = q
                 
         pose_model.rotation.copy_(best_quat)
+        best_initial_quat = best_quat.clone()
         print(f"[*] Auto-Align complete. Selected optimal starting rotation.")
-    # ==========================================
-    
-    # Now hand off to Adam
+
+    # High translation LR to slide, lower rotation/scale to stay stable
     optimizer = torch.optim.Adam([
-        {'params': [pose_model.translation], 'lr': 0.02}, 
+        {'params': [pose_model.translation], 'lr': 0.03}, 
         {'params': [pose_model.rotation], 'lr': 0.01},
         {'params': [pose_model.scale_scalar], 'lr': 0.01} 
     ])
@@ -194,7 +180,6 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
         obj_active_opacities = torch.sigmoid(obj_ops).contiguous()
         obj_active_rotations = torch.nn.functional.normalize(transformed_obj['rotations'], p=2, dim=-1).contiguous()
 
-        # Render RGB Full Scene
         rendered_image, radii = rgb_rasterizer(
             means3D=combined_means,
             means2D=torch.zeros_like(combined_means, requires_grad=True, device=device),
@@ -206,7 +191,6 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
             cov3D_precomp=None
         )
         
-        # Render Mask (True Silhouette)
         obj_colors = torch.ones((transformed_obj['means'].shape[0], 3), device=device).contiguous()
         rendered_mask_img, _ = mask_rasterizer(
             means3D=transformed_obj['means'].contiguous(), 
@@ -227,12 +211,31 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
             torchvision.utils.save_image(rendered_mask, f"data/outputs/DEBUG_rendered_mask_{epoch}.png")
         
         loss, loss_dict = loss_module(rendered_image, target_rgb, rendered_mask, target_mask)
-        loss.backward()
+        
+        # ==========================================
+        # [4] SCALE-DEPTH OPTIMIZATION
+        # ==========================================
+        # 1. Anti-Tilt Lock: The bear stays perfectly upright, but can spin (Z-rotation).
+        tilt_penalty = torch.abs(pose_model.rotation[1]) + torch.abs(pose_model.rotation[2])
+        
+        # 2. Gentle Gravity: Provides just enough anchor to make floating "expensive".
+        z_penalty = torch.nn.functional.l1_loss(pose_model.translation[2], true_initial_center[2]+0.15)
+
+        # Combine losses. (0.5 keeps it upright, 0.1 gentle gravity. SCALE IS 100% FREE TO GROW)
+        total_loss = loss + (z_penalty * 0.1) + (tilt_penalty * 0.5)
+        
+        total_loss.backward()
+        
+        # The Seatbelt: Prevents mathematical explosions
+        torch.nn.utils.clip_grad_norm_([pose_model.translation, pose_model.rotation, pose_model.scale_scalar], max_norm=0.1)
+        
         optimizer.step()
         pose_model.normalize_quaternion()
+        
+        scheduler.step(loss_dict['mask'])
             
         if epoch % 10 == 0:
-            print(f"Epoch {epoch:03d} | Total: {loss.item():.4f} | MASK: {loss_dict['mask']:.4f} | RGB: {loss_dict['rgb']:.4f}")
+            print(f"Epoch {epoch:03d} | Total: {total_loss.item():.4f} | MASK: {loss_dict['mask']:.4f} | RGB: {loss_dict['rgb']:.4f}")
             
     print("[*] Optimization complete. Saving...")
     with torch.no_grad():
@@ -242,6 +245,7 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
 if __name__ == "__main__":
     try:
         real_camera = load_scout_camera("data/inputs/selected_camera.pt")
+        
         run_refinement(
             ckpt_path="data/inputs/scene_with_initial_object.ckpt",
             target_img_path="data/inputs/diffusion_target.png",
