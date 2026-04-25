@@ -590,7 +590,7 @@ def _apply_transform_to_gaussians(
 
 def glb_to_gaussians(
     glb_path: str,
-    num_gaussians: int = 15000,
+    num_gaussians: int = 100000,
     target_scale: Optional[float] = None,
     scale_factor: float = 0.4,
     rotation: Optional[np.ndarray] = None,

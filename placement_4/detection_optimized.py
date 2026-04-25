@@ -29,14 +29,14 @@ import inspect
 from gemini_image_gen import generate_diffusion_image_with_gemini
 
 
-def _load_generate_obj_from_prompt_image():
+def _load_two_d_three_d_module():
     module_path = os.path.join(os.path.dirname(__file__), "2d_3d.py")
     spec = importlib.util.spec_from_file_location("two_d_three_d", module_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Unable to load module from {module_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.generate_obj_from_prompt_image
+    return module
 
 
 def _load_glb_to_gaussians():
@@ -49,7 +49,9 @@ def _load_glb_to_gaussians():
     return module.glb_to_gaussians
 
 
-generate_obj_from_prompt_image = _load_generate_obj_from_prompt_image()
+_TWO_D_THREE_D_MODULE = _load_two_d_three_d_module()
+generate_obj_from_prompt_image = _TWO_D_THREE_D_MODULE.generate_obj_from_prompt_image
+generate_obj_from_cutout_image = _TWO_D_THREE_D_MODULE.generate_obj_from_cutout_image
 glb_to_gaussians = _load_glb_to_gaussians()
 
 CKPT_PATH = "ckpt/bench_park.ckpt"
@@ -71,14 +73,54 @@ REQUIRE_GEMINI_CUTOUT = True
 
 # Session folder for outputs
 SESSION_TIMESTAMP = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-SESSION_DIR = f"session_{SESSION_TIMESTAMP}"
-os.makedirs(SESSION_DIR, exist_ok=True)
+DEFAULT_SESSION_DIR = f"session_{SESSION_TIMESTAMP}"
+SESSION_DIR = os.path.abspath(DEFAULT_SESSION_DIR)
 OUTPUT_PATH = os.path.join(SESSION_DIR, "room_with_object.ckpt")
 CAMERA_STATE_PATH = os.path.join(SESSION_DIR, "selected_camera_state.pt")
 OPTIMIZATION_ROOT = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "DG_3DPlace_Optimization")
 )
 OPTIMIZATION_CONDA_ENV = os.environ.get("OPTIMIZATION_CONDA_ENV", "dg3d_optimize").strip()
+
+
+def _configure_session_paths(session_dir, create=False):
+    """Set global session paths so the rest of the pipeline stays unchanged."""
+    global SESSION_DIR, OUTPUT_PATH, CAMERA_STATE_PATH
+    SESSION_DIR = os.path.abspath(session_dir)
+    if create:
+        os.makedirs(SESSION_DIR, exist_ok=True)
+    OUTPUT_PATH = os.path.join(SESSION_DIR, "room_with_object.ckpt")
+    CAMERA_STATE_PATH = os.path.join(SESSION_DIR, "selected_camera_state.pt")
+
+
+def _find_latest_session_dir(base_dir):
+    candidates = []
+    if not os.path.isdir(base_dir):
+        return None
+    for name in os.listdir(base_dir):
+        if not name.startswith("session_"):
+            continue
+        full = os.path.join(base_dir, name)
+        if os.path.isdir(full):
+            candidates.append(full)
+    if not candidates:
+        return None
+    candidates.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+    return candidates[0]
+
+
+def _write_object_prompt(session_dir, object_prompt):
+    prompt_path = os.path.join(session_dir, "object_prompt.txt")
+    with open(prompt_path, "w", encoding="utf-8") as f:
+        f.write((object_prompt or "").strip() + "\n")
+
+
+def _read_object_prompt(session_dir):
+    prompt_path = os.path.join(session_dir, "object_prompt.txt")
+    if not os.path.exists(prompt_path):
+        return ""
+    with open(prompt_path, "r", encoding="utf-8") as f:
+        return f.read().strip()
 
 
 # ══════════════════════════════════════════════════════════════════════
@@ -1433,6 +1475,92 @@ def infer_detection_target_from_prompt(object_prompt):
         return tokens[-1]
     return OBJECT_CLASSNAME
 
+
+def run_from_session_cutout(
+    session_dir,
+    object_prompt,
+    ckpt_path,
+    generated_image_path="",
+    cutout_image_path="",
+    hunyuan_conda_env="hunyuan",
+):
+    """Resume from the cutout stage and run placement + optimization without Gemini APIs."""
+    _configure_session_paths(session_dir, create=True)
+
+    global CKPT_PATH
+    CKPT_PATH = ckpt_path
+
+    if not os.path.exists(CKPT_PATH):
+        raise FileNotFoundError(f"Checkpoint not found: {CKPT_PATH}")
+
+    camera_state_path = os.path.join(SESSION_DIR, "selected_camera_state.pt")
+    if not os.path.exists(camera_state_path):
+        raise FileNotFoundError(f"Camera state not found in session: {camera_state_path}")
+
+    target_image = (generated_image_path or "").strip()
+    if not target_image:
+        target_image = os.path.join(SESSION_DIR, "gemini_diffusion_added.png")
+    target_image = os.path.abspath(target_image)
+    if not os.path.exists(target_image):
+        raise FileNotFoundError(
+            "Diffusion-added image is required for downstream steps and was not found at "
+            f"{target_image}. Use --generated-image-path to override."
+        )
+
+    cutout_candidates = []
+    if (cutout_image_path or "").strip():
+        cutout_candidates.append(cutout_image_path.strip())
+    cutout_candidates.extend(
+        [
+            os.path.join(SESSION_DIR, "gemini_object_cutout_processed.png"),
+            os.path.join(SESSION_DIR, "gemini_object_cleaned.png"),
+            os.path.join(SESSION_DIR, "gemini_object_cutout.png"),
+        ]
+    )
+
+    selected_cutout = None
+    for candidate in cutout_candidates:
+        candidate_abs = os.path.abspath(candidate)
+        if os.path.exists(candidate_abs):
+            selected_cutout = candidate_abs
+            break
+    if selected_cutout is None:
+        raise FileNotFoundError(
+            "No cutout image found in session. Expected one of gemini_object_cutout_processed.png, "
+            "gemini_object_cleaned.png, gemini_object_cutout.png, or pass --cutout-image-path."
+        )
+
+    generated_obj_path = os.path.join(SESSION_DIR, "generated_object.obj")
+    print("\n--- Resume Mode: Cutout -> 3D -> GS -> Placement -> Optimization ---")
+    print(f"Using session: {SESSION_DIR}")
+    print(f"Using cutout: {selected_cutout}")
+    print(f"Using diffusion-added image: {target_image}")
+    print(f"Using checkpoint: {CKPT_PATH}")
+
+    gen_result = generate_obj_from_cutout_image(
+        cutout_image_path=selected_cutout,
+        output_obj_path=generated_obj_path,
+        session_dir=SESSION_DIR,
+        conda_env=hunyuan_conda_env,
+    )
+    mesh_for_scene = (
+        gen_result.get("output_color_mesh_path")
+        or gen_result.get("output_glb_path")
+        or gen_result.get("output_obj_path")
+    )
+    if not mesh_for_scene:
+        raise RuntimeError("Cutout-to-3D completed but no mesh output path was returned.")
+
+    prompt_for_detection = (object_prompt or "").strip() or OBJECT_CLASSNAME
+    _write_object_prompt(SESSION_DIR, prompt_for_detection)
+
+    add_object_to_scene(
+        object_image_path=target_image,
+        object_obj_path=mesh_for_scene,
+        camera_state_path=camera_state_path,
+        detection_target=prompt_for_detection,
+    )
+
 # ══════════════════════════════════════════════════════════════════════
 # Vase Gaussian Integration
 # ══════════════════════════════════════════════════════════════════════
@@ -1482,14 +1610,6 @@ This script is split into two main functions:
 # ══════════════════════════════════════════════════════════════════════
 if __name__ == "__main__":
     import argparse
-    print("\n--- Unified Pipeline (Single Runtime / Single Session) ---")
-    print("1) Generate candidate camera views")
-    print("2) Choose one camera interactively")
-    print("3) Save camera metadata (.pt) inside this session folder")
-    print("4) Generate diffusion-added image with Gemini API")
-    print("5) Detect object bbox and auto-generate OBJ via 2d_3d.py")
-    print(f"Viewer command after completion: python view_room.py {OUTPUT_PATH} --port 8080")
-
     parser = argparse.ArgumentParser(description="Run the 3D placement pipeline.")
     parser.add_argument(
         "object_prompt",
@@ -1501,9 +1621,82 @@ if __name__ == "__main__":
         default=CKPT_PATH,
         help=f"Input checkpoint path to load (default: {CKPT_PATH}).",
     )
+    parser.add_argument(
+        "--resume-from-cutout",
+        action="store_true",
+        help="Resume from saved cutout onward (no Gemini API calls).",
+    )
+    parser.add_argument(
+        "--session-dir",
+        default="",
+        help="Existing session directory to resume from. If omitted with --resume-from-cutout, latest session_* is used.",
+    )
+    parser.add_argument(
+        "--generated-image-path",
+        default="",
+        help="Override path to diffusion-added image for placement (default: <session>/gemini_diffusion_added.png).",
+    )
+    parser.add_argument(
+        "--cutout-image-path",
+        default="",
+        help="Override path to existing cutout image (default: processed/cleaned/cutout in session).",
+    )
+    parser.add_argument(
+        "--hunyuan-conda-env",
+        default=os.environ.get("HUNYUAN_CONDA_ENV", "hunyuan"),
+        help="Conda env used for Hunyuan3D step1/step2 during resume mode.",
+    )
     args = parser.parse_args()
 
     CKPT_PATH = args.ckpt_path
+
+    if args.resume_from_cutout:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        if (args.session_dir or "").strip():
+            session_to_use = os.path.abspath(args.session_dir.strip())
+        else:
+            session_to_use = _find_latest_session_dir(script_dir)
+
+        if not session_to_use:
+            print("No session directory provided and no session_* folder found in placement_4.")
+            sys.exit(1)
+
+        if not os.path.isdir(session_to_use):
+            print(f"Session directory not found: {session_to_use}")
+            sys.exit(1)
+
+        prompt_for_resume = (args.object_prompt or "").strip() or _read_object_prompt(session_to_use)
+        if not prompt_for_resume:
+            prompt_for_resume = input("Enter object prompt for OWLv2 detection: ").strip()
+        if not prompt_for_resume:
+            print("Object prompt is required for resume mode.")
+            sys.exit(1)
+
+        try:
+            run_from_session_cutout(
+                session_dir=session_to_use,
+                object_prompt=prompt_for_resume,
+                ckpt_path=CKPT_PATH,
+                generated_image_path=args.generated_image_path,
+                cutout_image_path=args.cutout_image_path,
+                hunyuan_conda_env=args.hunyuan_conda_env,
+            )
+        except Exception as e:
+            print(f"Resume mode failed: {e}")
+            sys.exit(1)
+
+        print(f"Viewer command after completion: python view_room.py {OUTPUT_PATH} --port 8080")
+        sys.exit(0)
+
+    _configure_session_paths(DEFAULT_SESSION_DIR, create=True)
+    print("\n--- Unified Pipeline (Single Runtime / Single Session) ---")
+    print("1) Generate candidate camera views")
+    print("2) Choose one camera interactively")
+    print("3) Save camera metadata (.pt) inside this session folder")
+    print("4) Generate diffusion-added image with Gemini API")
+    print("5) Detect object bbox and auto-generate OBJ via 2d_3d.py")
+    print(f"Session directory: {SESSION_DIR}")
+    print(f"Viewer command after completion: python view_room.py {OUTPUT_PATH} --port 8080")
 
     select_camera_and_render()
 
@@ -1516,6 +1709,7 @@ if __name__ == "__main__":
     if not object_prompt:
         print("Edit prompt cannot be empty.")
         sys.exit(1)
+    _write_object_prompt(SESSION_DIR, object_prompt)
     print("No OBJ path provided, generating OBJ from prompt.")
 
     api_key = os.environ.get("GEMINI_API_KEY", "").strip()
@@ -1554,3 +1748,5 @@ if __name__ == "__main__":
         
         
 # python view_room.py /home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260213_004047/room_with_object.ckpt --port 8080
+
+# python detection_optimized.py "a red car near the bench" --resume-from-cutout
