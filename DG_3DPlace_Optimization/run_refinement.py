@@ -142,6 +142,8 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
         {'params': [pose_model.scale_scalar], 'lr': 0.01} 
     ])
 
+    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=30)
+
     epochs = 200
     
     for epoch in range(epochs):
