@@ -7,7 +7,7 @@ sys.path.insert(0, './hy3dshape')
 sys.path.insert(0, './hy3dpaint')
 
 # Set input/output paths
-IMAGE_INPUT = r'/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039/gemini_object_cutout.png'
+IMAGE_INPUT = r'/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039/gemini_object_cutout_processed.png'
 MESH_INPUT = r'/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039/generated_object.obj'
 OUTPUT_DIR = r'/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039'
 
@@ -16,7 +16,7 @@ with open(r'/home/cse_g2/RealEstateGen/DG-3DPlace/Hunyuan3D-2.1/step2_paint.py')
     code = code_file.read()
     # Replace the default paths with our absolute paths
     code = code.replace('IMAGE_INPUT = "input/demo_no_bg.png"',
-                       f'IMAGE_INPUT = r"/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039/gemini_object_cutout.png"')
+                       f'IMAGE_INPUT = r"/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039/gemini_object_cutout_processed.png"')
     code = code.replace('MESH_INPUT = "intermediate_mesh/mesh.obj"',
                        f'MESH_INPUT = r"/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039/generated_object.obj"')
     code = code.replace('OUTPUT_DIR = "output"',

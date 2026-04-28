@@ -1656,6 +1656,18 @@ if __name__ == "__main__":
         help="Override path to existing cutout image (default: processed/cleaned/cutout in session).",
     )
     parser.add_argument(
+        "--evaluate",
+        nargs="?",
+        const="__ALL__",
+        default=None,
+        help=(
+            "Run evaluation after pipeline. "
+            "If omitted no evaluation is run. "
+            "If provided with no value evaluates all sessions; "
+            "or pass a session folder path to evaluate that session."
+        ),
+    )
+    parser.add_argument(
         "--hunyuan-conda-env",
         default=os.environ.get("HUNYUAN_CONDA_ENV", "hunyuan"),
         help="Conda env used for Hunyuan3D step1/step2 during resume mode.",
@@ -1701,6 +1713,48 @@ if __name__ == "__main__":
 
         print(f"Viewer command after completion: python view_room.py {OUTPUT_PATH} --port 8080")
         sys.exit(0)
+
+    # If evaluation flag set and user only wanted to evaluate, run and exit
+    eval_flag = (args.evaluate is not None)
+    if eval_flag and (not args.object_prompt) and not args.resume_from_cutout:
+        # user invoked `--evaluate` in default run; run evaluation(s) and exit
+        try:
+            from evaluate_sessions import evaluate_session, evaluate_all_sessions
+        except Exception as e:
+            print(f"Evaluation helper import failed: {e}")
+            sys.exit(1)
+
+        if args.evaluate == "__ALL__":
+            results = evaluate_all_sessions(initial_ckpt=CKPT_PATH)
+
+            for s, txt in results.items():
+                session_report_path = os.path.join(os.path.abspath(s), "detection_resource_report.txt")
+                os.makedirs(os.path.dirname(session_report_path), exist_ok=True)
+                with open(session_report_path, "a") as fh:
+                    fh.write(f"\n--- Evaluation run: {datetime.datetime.now().isoformat()} ---\n")
+                    fh.write(f"=== Session: {s} ===\n")
+                    fh.write(txt)
+                    fh.write("\n\n")
+                print(f"Evaluation appended to {session_report_path}")
+
+            print("Evaluation complete for all sessions.")
+            sys.exit(0)
+        else:
+            # treat args.evaluate as a session path if provided
+            sess = os.path.abspath(args.evaluate)
+            try:
+                outtxt = evaluate_session(sess, initial_ckpt=CKPT_PATH)
+            except Exception as e:
+                outtxt = f"Evaluation failed: {e}"
+            report_path = os.path.join(sess, "detection_resource_report.txt")
+            os.makedirs(os.path.dirname(report_path), exist_ok=True)
+            with open(report_path, "a") as fh:
+                fh.write(f"\n--- Evaluation run: {datetime.datetime.now().isoformat()} ---\n")
+                fh.write(f"Session: {sess}\n")
+                fh.write(outtxt)
+                fh.write("\n\n")
+            print(f"Evaluation complete for session {sess}. Report appended to {report_path}")
+            sys.exit(0)
 
     _configure_session_paths(DEFAULT_SESSION_DIR, create=True)
     print("\n--- Unified Pipeline (Single Runtime / Single Session) ---")
@@ -1764,3 +1818,7 @@ if __name__ == "__main__":
 # python view_room.py /home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260213_004047/room_with_object.ckpt --port 8080
 
 # python detection_optimized.py "a computer" --resume-from-cutout
+
+# python detection_optimized.py --evaluate
+
+# python detection_optimized.py --evaluate 
