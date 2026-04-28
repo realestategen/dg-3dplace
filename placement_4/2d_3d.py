@@ -513,11 +513,80 @@ def generate_obj_from_prompt_image(
     }
 
 
+def generate_obj_from_cutout_image(
+    cutout_image_path: str,
+    output_obj_path: str,
+    session_dir: Optional[str] = None,
+    conda_env: str = "hunyuan",
+) -> Dict[str, Any]:
+    """Generate colored 3D object from an existing object cutout image.
+
+    This path skips all Gemini usage and is intended for debug reruns from a saved session.
+    """
+    if not os.path.exists(cutout_image_path):
+        raise FileNotFoundError(f"Cutout image not found: {cutout_image_path}")
+
+    os.makedirs(os.path.dirname(os.path.abspath(output_obj_path)), exist_ok=True)
+    if session_dir:
+        os.makedirs(session_dir, exist_ok=True)
+
+    shape_input_image = os.path.abspath(cutout_image_path)
+
+    print("Running Hunyuan3D step1 (shape generation) from existing cutout...")
+    ok, msg = _run_step1_shape_subprocess(
+        input_image_path=shape_input_image,
+        output_mesh_path=output_obj_path,
+        conda_env=conda_env,
+    )
+    if not ok:
+        raise RuntimeError(f"Step1 shape generation failed: {msg}")
+
+    print(f"✓ Untextured mesh generated: {output_obj_path}")
+
+    print("Running Hunyuan3D step2 (texture painting) from existing cutout...")
+    output_dir = os.path.dirname(os.path.abspath(output_obj_path))
+    ok, msg = _run_step2_paint_subprocess(
+        mesh_path=output_obj_path,
+        image_path=shape_input_image,
+        output_folder=output_dir,
+        conda_env=conda_env,
+    )
+    if not ok:
+        raise RuntimeError(f"Step2 paint generation failed: {msg}")
+
+    print(f"✓ Painted mesh completed in: {output_dir}")
+
+    textured_outputs = _collect_textured_outputs(output_dir=output_dir, untextured_obj_path=output_obj_path)
+    output_glb_path = textured_outputs.get("output_glb_path")
+    textured_output_path = textured_outputs.get("textured_output_path")
+    mtl_path = textured_outputs.get("mtl_path")
+    albedo_path = textured_outputs.get("albedo_path")
+    output_color_mesh_path = textured_outputs.get("output_color_mesh_path")
+
+    if output_color_mesh_path:
+        print(f"✓ Color mesh selected: {output_color_mesh_path}")
+    else:
+        print("Warning: no textured mesh artifact detected; pipeline may fall back to flat color.")
+
+    return {
+        "output_obj_path": output_obj_path,
+        "output_glb_path": output_glb_path,
+        "textured_output_path": textured_output_path,
+        "mtl_path": mtl_path,
+        "albedo_path": albedo_path,
+        "output_color_mesh_path": output_color_mesh_path,
+        "gemini_object_cutout_path": shape_input_image,
+        "bbox": None,
+        "conda_env": conda_env,
+    }
+
+
 def _parse_args():
     parser = argparse.ArgumentParser(description="Generate colored 3D object with Hunyuan3D-2.1 workflow")
-    parser.add_argument("--image", required=True, help="Input image path")
-    parser.add_argument("--prompt", required=True, help="Prompt describing the object")
+    parser.add_argument("--image", default="", help="Input image path")
+    parser.add_argument("--prompt", default="", help="Prompt describing the object")
     parser.add_argument("--output", required=True, help="Output OBJ path")
+    parser.add_argument("--cutout", default="", help="Existing cutout image to skip Gemini and run only Hunyuan steps")
     parser.add_argument("--session-dir", default="", help="Optional debug output folder")
     parser.add_argument("--bbox", nargs=4, type=float, default=None, help="Optional bbox x1 y1 x2 y2")
     parser.add_argument("--require-gemini-cutout", action="store_true", help="Fail if Gemini cutout is not used")
@@ -531,16 +600,28 @@ def main():
     bbox = tuple(args.bbox) if args.bbox is not None else None
     
     try:
-        result = generate_obj_from_prompt_image(
-            image_path=args.image,
-            prompt=args.prompt,
-            output_obj_path=args.output,
-            bbox=bbox,
-            session_dir=args.session_dir or None,
-            require_gemini_cutout=bool(args.require_gemini_cutout),
-            api_key=(args.api_key or "").strip() or None,
-            conda_env=args.conda_env,
-        )
+        if (args.cutout or "").strip():
+            result = generate_obj_from_cutout_image(
+                cutout_image_path=args.cutout.strip(),
+                output_obj_path=args.output,
+                session_dir=args.session_dir or None,
+                conda_env=args.conda_env,
+            )
+        else:
+            if not (args.image or "").strip():
+                raise ValueError("--image is required when --cutout is not provided")
+            if not (args.prompt or "").strip():
+                raise ValueError("--prompt is required when --cutout is not provided")
+            result = generate_obj_from_prompt_image(
+                image_path=args.image,
+                prompt=args.prompt,
+                output_obj_path=args.output,
+                bbox=bbox,
+                session_dir=args.session_dir or None,
+                require_gemini_cutout=bool(args.require_gemini_cutout),
+                api_key=(args.api_key or "").strip() or None,
+                conda_env=args.conda_env,
+            )
         
         print("\n" + "="*60)
         print("✓ 3D Generation Complete!")

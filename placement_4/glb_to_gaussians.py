@@ -545,6 +545,7 @@ def _apply_transform_to_gaussians(
     scale_factor: float,
     rotation: Optional[np.ndarray],
     translation: Optional[np.ndarray],
+    support_z: Optional[float] = None,
 ) -> Dict[str, torch.Tensor]:
     means = gs["means"].detach().cpu().numpy().astype(np.float32)
     scales = gs["scales"].detach().cpu().numpy().astype(np.float32)
@@ -567,6 +568,13 @@ def _apply_transform_to_gaussians(
 
     if translation is not None:
         means += np.asarray(translation, dtype=np.float32)
+
+    # If a support surface height is provided, lift the object so its
+    # lowest gaussian sits exactly at support_z (prevents sinking).
+    if support_z is not None and means.size > 0:
+        min_z = float(means[:, 2].min())
+        shift = float(support_z - min_z)
+        means[:, 2] += shift
 
     out = dict(gs)
     out["means"] = torch.tensor(means, dtype=torch.float32)
@@ -595,6 +603,7 @@ def glb_to_gaussians(
     scale_factor: float = 0.4,
     rotation: Optional[np.ndarray] = None,
     translation: Optional[np.ndarray] = None,
+    support_z: Optional[float] = None,
     opacity_logit: float = 5.0,
     run_render_colmap: bool = False,
     work_dir: Optional[str] = None,
@@ -650,6 +659,7 @@ def glb_to_gaussians(
             scale_factor=scale_factor,
             rotation=rotation,
             translation=translation,
+            support_z=support_z,
         )
 
         ops = transformed["opacities"]
@@ -681,6 +691,12 @@ def glb_to_gaussians(
 
     if translation is not None:
         pts_scene += np.asarray(translation, dtype=np.float32)
+
+    # Align object bottom to support surface if requested.
+    if support_z is not None and pts_scene.size > 0:
+        min_z = float(pts_scene[:, 2].min())
+        shift = float(support_z - min_z)
+        pts_scene[:, 2] += shift
 
     means = torch.tensor(pts_scene, dtype=torch.float32)
 

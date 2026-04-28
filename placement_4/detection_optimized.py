@@ -1073,7 +1073,18 @@ def add_object_to_scene(
     target_extent = target_max - target_min
     # Clamp scale to min(X, Y) to avoid oversize
     scale = min(target_extent[0], target_extent[1])
-    translation = target_center
+
+    # Estimate a support surface height from the detected gaussians.
+    # Use a low-percentile of the Z distribution to prefer the supporting surface
+    # (e.g. tabletop or ground) rather than an object top inside the bbox.
+    try:
+        support_z = float(np.percentile(target_means[:, 2], 20))
+    except Exception:
+        support_z = float(target_center[2])
+
+    # Translate horizontally to the detected region center; let glb_to_gaussians
+    # align the object's bottom to `support_z` when adding gaussians.
+    translation = np.array([float(target_center[0]), float(target_center[1]), 0.0], dtype=np.float32)
     num_gaussians = 100000
     print(f"Target region center: {target_center}, extent: {target_extent}, scale (clamped): {scale}")
     print(f"Scene means min: {means.min(axis=0)}, max: {means.max(axis=0)}, center: {means.mean(axis=0)}")
@@ -1108,6 +1119,7 @@ def add_object_to_scene(
                     scale_factor=0.4,
                     rotation=None,
                     translation=translation,
+                    support_z=support_z,
                     opacity_logit=5.0,
                     run_render_colmap=True,
                     work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
@@ -1130,6 +1142,7 @@ def add_object_to_scene(
                     scale_factor=0.4,
                     rotation=None,
                     translation=translation,
+                    support_z=support_z,
                     opacity_logit=5.0,
                     run_render_colmap=False,
                     work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
@@ -1143,6 +1156,7 @@ def add_object_to_scene(
                 scale_factor=0.4,
                 rotation=None,
                 translation=translation,
+                support_z=support_z,
                 opacity_logit=5.0,
                 run_render_colmap=False,
                 work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
@@ -1749,4 +1763,4 @@ if __name__ == "__main__":
         
 # python view_room.py /home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260213_004047/room_with_object.ckpt --port 8080
 
-# python detection_optimized.py "a red car near the bench" --resume-from-cutout
+# python detection_optimized.py "a computer" --resume-from-cutout
