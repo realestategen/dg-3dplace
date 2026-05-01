@@ -137,11 +137,11 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
 
     # High translation LR to slide, lower rotation/scale to stay stable
     optimizer = torch.optim.Adam([
-        {'params': [pose_model.translation], 'lr': 0.03}, 
+        {'params': [pose_model.translation], 'lr': 0.005}, 
         {'params': [pose_model.rotation], 'lr': 0.01},
         {'params': [pose_model.scale_scalar], 'lr': 0.01} 
     ])
-
+    
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=30)
 
     epochs = 200
@@ -215,16 +215,19 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
         loss, loss_dict = loss_module(rendered_image, target_rgb, rendered_mask, target_mask)
         
         # ==========================================
-        # [4] SCALE-DEPTH OPTIMIZATION
+        # [4] THE "NO YEETING" OPTIMIZATION
         # ==========================================
-        # 1. Anti-Tilt Lock: The bear stays perfectly upright, but can spin (Z-rotation).
+        # 1. Anti-Tilt Lock: Stays perfectly upright.
         tilt_penalty = torch.abs(pose_model.rotation[1]) + torch.abs(pose_model.rotation[2])
         
-        # 2. Gentle Gravity: Provides just enough anchor to make floating "expensive".
-        z_penalty = torch.nn.functional.l1_loss(pose_model.translation[2], true_initial_center[2]+0.15)
+        # 2. Gentle Gravity: Keeps it near the ground.
+        z_penalty = torch.nn.functional.l1_loss(pose_model.translation[2], true_initial_center[2])
 
-        # Combine losses. (0.5 keeps it upright, 0.1 gentle gravity. SCALE IS 100% FREE TO GROW)
-        total_loss = loss + (z_penalty * 0.1) + (tilt_penalty * 0.5)
+        # 3. [NEW] The XY Tether: Put a heavy leash on the object so it CANNOT leave the frame!
+        xy_penalty = torch.nn.functional.mse_loss(pose_model.translation[:2], true_initial_center[:2])
+
+        # Combine losses. (Added the xy_penalty with a massive 2.0 weight to trap it on screen)
+        total_loss = loss + (z_penalty * 0.1) + (tilt_penalty * 0.5) + (xy_penalty * 2.0)
         
         total_loss.backward()
         
