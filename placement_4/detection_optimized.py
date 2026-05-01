@@ -54,11 +54,11 @@ generate_obj_from_prompt_image = _TWO_D_THREE_D_MODULE.generate_obj_from_prompt_
 generate_obj_from_cutout_image = _TWO_D_THREE_D_MODULE.generate_obj_from_cutout_image
 glb_to_gaussians = _load_glb_to_gaussians()
 
-CKPT_PATH = "ckpt/bench_park.ckpt"
+CKPT_PATH = "ckpt/room.ckpt"
 RENDER_W, RENDER_H = 1280, 720
 NUM_CAMERAS = 15
 FOV_DEG = 60.0
-ORBIT_SCALE = 0.008       # fraction of scene extent for orbit radius
+ORBIT_SCALE = 0.06       # fraction of scene extent for orbit radius
 CAMERA_HEIGHT_OFFSET = 0.0  # keep horizontal view
 OPACITY_THRESHOLD = 0.1
 HEIGHT_TOLERANCE = 0.15      # for surface filtering
@@ -1575,6 +1575,34 @@ def run_from_session_cutout(
         detection_target=prompt_for_detection,
     )
 
+
+def _append_session_evaluation_report(session_dir, initial_ckpt_path):
+    """Run evaluation for a single session and append output to that session report."""
+    session_dir = os.path.abspath(session_dir)
+    report_path = os.path.join(session_dir, "detection_resource_report.txt")
+    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+
+    try:
+        from evaluate_sessions import evaluate_session
+    except Exception as e:
+        with open(report_path, "a") as fh:
+            fh.write(f"\n--- Evaluation run: {datetime.datetime.now().isoformat()} ---\n")
+            fh.write(f"Evaluation helper import failed: {e}\n\n")
+        print(f"Evaluation helper import failed: {e}")
+        return
+
+    try:
+        outtxt = evaluate_session(session_dir, initial_ckpt=initial_ckpt_path)
+    except Exception as e:
+        outtxt = f"Evaluation failed: {e}"
+
+    with open(report_path, "a") as fh:
+        fh.write(f"\n--- Evaluation run: {datetime.datetime.now().isoformat()} ---\n")
+        fh.write(f"Session: {session_dir}\n")
+        fh.write(outtxt)
+        fh.write("\n\n")
+    print(f"Evaluation appended to {report_path}")
+
 # ══════════════════════════════════════════════════════════════════════
 # Vase Gaussian Integration
 # ══════════════════════════════════════════════════════════════════════
@@ -1711,6 +1739,9 @@ if __name__ == "__main__":
             print(f"Resume mode failed: {e}")
             sys.exit(1)
 
+        # Auto-evaluate the same session after resume pipeline completion.
+        _append_session_evaluation_report(session_to_use, CKPT_PATH)
+
         print(f"Viewer command after completion: python view_room.py {OUTPUT_PATH} --port 8080")
         sys.exit(0)
 
@@ -1812,6 +1843,8 @@ if __name__ == "__main__":
         CAMERA_STATE_PATH,
         object_prompt,
     )
+    
+    _append_session_evaluation_report(SESSION_DIR, CKPT_PATH)
         
         
         
