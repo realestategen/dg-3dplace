@@ -88,15 +88,12 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
         pose_model.obj_center = true_initial_center.clone()
         pose_model.translation.copy_(true_initial_center)
 
-    print("[*] Running Generalized Auto-Align to find best starting rotation...")
-    test_quats = [
-        torch.tensor([1.0, 0.0, 0.0, 0.0], device=device),     
-        torch.tensor([0.707, 0.707, 0.0, 0.0], device=device), 
-        torch.tensor([0.707, -0.707, 0.0, 0.0], device=device),
-        torch.tensor([0.707, 0.0, 0.707, 0.0], device=device), 
-        torch.tensor([0.707, 0.0, -0.707, 0.0], device=device),
-        torch.tensor([0.707, 0.0, 0.0, 0.707], device=device)  
-    ]
+    print("[*] Running 360-Degree Auto-Align to find best starting rotation...")
+    test_quats = []
+    for i in range(8):
+        angle = i * (math.pi / 4.0) 
+        q = torch.tensor([math.cos(angle/2), 0.0, 0.0, math.sin(angle/2)], device=device)
+        test_quats.append(q)
     
     best_initial_loss = float('inf')
     best_quat = test_quats[0]
@@ -135,16 +132,16 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
         best_initial_quat = best_quat.clone()
         print(f"[*] Auto-Align complete. Selected optimal starting rotation.")
 
-    # High translation LR to slide, lower rotation/scale to stay stable
+    # ==========================================
+    # UNIVERSAL OPTIMIZERS
+    # ==========================================
     optimizer = torch.optim.Adam([
         {'params': [pose_model.translation], 'lr': 0.005}, 
-        {'params': [pose_model.rotation], 'lr': 0.01},
+        {'params': [pose_model.rotation], 'lr': 0.01},    
         {'params': [pose_model.scale_scalar], 'lr': 0.01} 
     ])
-    
-    scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=30)
 
-    epochs = 200
+    epochs = 200 
     
     for epoch in range(epochs):
         optimizer.zero_grad()
@@ -215,32 +212,31 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
         loss, loss_dict = loss_module(rendered_image, target_rgb, rendered_mask, target_mask)
         
         # ==========================================
-        # [4] THE "NO YEETING" OPTIMIZATION
+        # UNIVERSAL MASK ANCHOR (IoU Loss)
         # ==========================================
-        # 1. Anti-Tilt Lock: Stays perfectly upright.
+        intersection = (rendered_mask * target_mask).sum()
+        union = rendered_mask.sum() + target_mask.sum() + 1e-6
+        iou_loss = 1.0 - (intersection / union)
+
+        # ==========================================
+        # POSTURE & PENALTIES
+        # ==========================================
+        # [!] BOOSTED TILT PENALTY: Weight increased to 1.0 so the IoU loss cannot cheat by leaning the object!
         tilt_penalty = torch.abs(pose_model.rotation[1]) + torch.abs(pose_model.rotation[2])
-        
-        # 2. Gentle Gravity: Keeps it near the ground.
         z_penalty = torch.nn.functional.l1_loss(pose_model.translation[2], true_initial_center[2])
+        xy_penalty = torch.nn.functional.l1_loss(pose_model.translation[:2], true_initial_center[:2])
 
-        # 3. [NEW] The XY Tether: Put a heavy leash on the object so it CANNOT leave the frame!
-        xy_penalty = torch.nn.functional.mse_loss(pose_model.translation[:2], true_initial_center[:2])
-
-        # Combine losses. (Added the xy_penalty with a massive 2.0 weight to trap it on screen)
-        total_loss = loss + (z_penalty * 0.1) + (tilt_penalty * 0.5) + (xy_penalty * 2.0)
+        total_loss = loss + (iou_loss * 2.0) + (tilt_penalty * 1.0) + (z_penalty * 1.0) + (xy_penalty * 1.0)
         
         total_loss.backward()
         
-        # The Seatbelt: Prevents mathematical explosions
         torch.nn.utils.clip_grad_norm_([pose_model.translation, pose_model.rotation, pose_model.scale_scalar], max_norm=0.1)
         
         optimizer.step()
         pose_model.normalize_quaternion()
-        
-        scheduler.step(loss_dict['mask'])
-            
+                    
         if epoch % 10 == 0:
-            print(f"Epoch {epoch:03d} | Total: {total_loss.item():.4f} | MASK: {loss_dict['mask']:.4f} | RGB: {loss_dict['rgb']:.4f}")
+            print(f"Epoch {epoch:03d} | Total: {total_loss.item():.4f} | IoU: {iou_loss.item():.4f} | MASK: {loss_dict['mask']:.4f}")
             
     print("[*] Optimization complete. Saving...")
     with torch.no_grad():
