@@ -234,6 +234,25 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
         
         optimizer.step()
         pose_model.normalize_quaternion()
+        
+        # ==========================================
+        # THE PHYSICAL CAGE & FORCEFIELD
+        # ==========================================
+        with torch.no_grad():
+            pose_model.scale_scalar.data = torch.clamp(pose_model.scale_scalar.data, min=-0.2)
+            
+            max_drift = 1.5
+            pose_model.translation.data = torch.clamp(
+                pose_model.translation.data, 
+                min=true_initial_center - max_drift, 
+                max=true_initial_center + max_drift
+            )
+            
+            vec_to_cam = pose_model.translation.data - camera.camera_center
+            dist_to_cam = torch.norm(vec_to_cam)
+            min_safe_dist = 0.05 
+            if dist_to_cam < min_safe_dist:
+                pose_model.translation.data = camera.camera_center + (vec_to_cam / dist_to_cam) * min_safe_dist
                     
         if epoch % 10 == 0:
             print(f"Epoch {epoch:03d} | Total: {total_loss.item():.4f} | IoU: {iou_loss.item():.4f} | MASK: {loss_dict['mask']:.4f}")
