@@ -1,0 +1,59 @@
+.sl { display: flex; flex-direction: column; gap: 24px; }
+.sl-header h1 { font-size: 22px; font-weight: 700; }
+.sl-sub { color: var(--muted); margin-top: 4px; }
+.sl-empty { color: var(--muted); text-align: center; padding: 32px; }
+
+.sl-loading {
+  display: flex;
+  justify-content: center;
+  padding: 48px;
+}
+.sl-spinner {
+  display: inline-block;
+  width: 36px;
+  height: 36px;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: sl-spin 0.8s linear infinite;
+}
+@keyframes sl-spin { to { transform: rotate(360deg); } }
+
+.sl-list { display: flex; flex-direction: column; gap: 8px; }
+
+.sl-row {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 14px 18px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  transition: border-color 0.15s;
+}
+.sl-row.clickable { cursor: pointer; }
+.sl-row.clickable:hover { border-color: var(--accent); }
+
+.sl-row-left { display: flex; flex-direction: column; gap: 2px; }
+.sl-name { font-weight: 600; }
+.sl-date { color: var(--muted); font-size: 11px; }
+
+.sl-status {
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.sl-spin {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border: 2px solid currentColor;
+  border-top-color: transparent;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+}
+
+@keyframes spin { to { transform: rotate(360deg); } }

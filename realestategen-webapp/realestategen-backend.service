@@ -1,0 +1,16 @@
+[Unit]
+Description=RealEstateGen DG-3DGS Backend
+After=network.target
+
+[Service]
+Type=simple
+User=cse_g2
+WorkingDirectory=/home/cse_g2/RealEstateGen/DG-3DPlace/realestategen-webapp/backend
+ExecStart=/home/cse_g2/RealEstateGen/DG-3DPlace/realestategen-webapp/backend/.venv/bin/uvicorn main:app --host 0.0.0.0 --port 8765
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

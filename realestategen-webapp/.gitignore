@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.Python
+
+# Virtual environment
+backend/.venv/
+venv/
+env/
+ENV/
+
+# Database
+backend/*.db
+
+# Data directories (large files, user-generated)
+data/videos/
+data/scenes/
+data/captured_images/
+data/thumbnails/
+
+# Logs
+logs/
+*.log
+
+# Frontend build
+frontend/node_modules/
+frontend/dist/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Env files
+.env
+.env.local
+.env.*.local

@@ -1,0 +1,16 @@
+[Unit]
+Description=RealEstateGen DG-3DGS Frontend
+After=network.target realestategen-backend.service
+
+[Service]
+Type=simple
+User=cse_g2
+WorkingDirectory=/home/cse_g2/RealEstateGen/DG-3DPlace/realestategen-webapp/frontend
+ExecStart=/usr/bin/npm run dev -- --port 5174 --host
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
