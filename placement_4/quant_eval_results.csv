@@ -1,9 +1,6 @@
-session,clip_dir,dino_sim
-/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224918,,,
-/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224918,0.7653521656990051,0.8265812397003174
-/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224918,0.6959018993377686,0.8266397714614868
-/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_214420,0.7044461464881897,0.7022587835788727
-/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_215829,0.6325247883796692,0.86939558386802673
-/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224709,0.7156762480735779,0.67697014808654785
-/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224918,0.7545303106307983,0.777519154548645
-/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039,0.7418096423149109,0.82220914363861084
+session_dir,unoptimized_final_view,optimized_final_view,unoptimized_clip_directional_image,unoptimized_clip_directional_text,unoptimized_dino_similarity,optimized_clip_directional_image,optimized_clip_directional_text,optimized_dino_similarity
+/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_214420,/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_214420/final_view_with_object.png,/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_214420/final_view_with_object_optimized.png,0.5879981517791748,0.2181500792503357,0.6613057255744934,0.8366507267951965,0.24806339800357819,0.8562302589416504
+/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_215829,/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_215829/final_view_with_object.png,/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_215829/final_view_with_object_optimized.png,0.6121557593345642,0.1836638543009758,0.8443290591239929,0.662023663520813,0.26588976979255676,0.8552051782608032
+/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224709,/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224709/final_view_with_object.png,/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224709/final_view_with_object_optimized.png,0.5106725573539734,0.1557776615023613,0.5511312007904053,0.7620083212852478,0.24202488660812378,0.6546557903289795
+/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224918,/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224918/final_view_with_object.png,/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260427_224918/final_view_with_object_optimized.png,0.6325828433036804,0.2624067962169647,0.6962316036224365,0.7469035387039185,0.23760526299476624,0.8659884929656982
+/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039,/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039/final_view_with_object.png,/home/cse_g2/RealEstateGen/DG-3DPlace/placement_4/session_20260429_010039/final_view_with_object_optimized.png,0.60737605690956116,0.1914100930094719,0.8489840626716614,0.84489577412605286,0.26443192958831787,0.8687441349029541

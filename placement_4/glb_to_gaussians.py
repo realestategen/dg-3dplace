@@ -10,8 +10,141 @@ from typing import Dict, Optional, Tuple, List
 import numpy as np
 import torch
 import trimesh
+import plyfile
+from scipy.spatial.transform import Rotation as ScipyRotation
 
 C0 = 0.28209479177387814
+
+# Coordinate conversion applied to all objects entering the scene.
+# GLB uses Y-up; the 3DGS scene uses Z-up.
+# Mapping: [X, Y, Z]_glb  →  [X, -Z, Y]_scene
+_COORD_CONV = np.array([[1, 0, 0],
+                         [0, 0, -1],
+                         [0, 1, 0]], dtype=np.float64)
+
+
+def mesh2splat_ply_to_gaussians(
+    ply_path: str,
+    target_scale: Optional[float] = None,
+    scale_factor: float = 0.4,
+    rotation: Optional[np.ndarray] = None,
+    translation: Optional[np.ndarray] = None,
+    support_z: Optional[float] = None,
+) -> Dict[str, torch.Tensor]:
+    """Load a mesh2splat-exported PLY and return a Gaussian dict ready for the scene.
+
+    mesh2splat writes standard 3DGS PLY with:
+      position  : x y z
+      SH DC     : f_dc_0 f_dc_1 f_dc_2
+      SH rest   : f_rest_0 … f_rest_44  (45 floats, typically zero)
+      opacity   : opacity  (raw logit)
+      log-scale : scale_0 scale_1 scale_2
+      quaternion: rot_0 rot_1 rot_2 rot_3  (w x y z)
+
+    The function applies the same placement pipeline as glb_to_gaussians:
+      1. Centre the object at the origin
+      2. Coordinate conversion  [X,-Z,Y]  (GLB Y-up → scene Z-up)
+         — positions: direct axis remap
+         — quaternions: conjugate-sandwich with the coord-change rotation
+      3. Uniform scale to target_scale * scale_factor
+      4. Optional placement rotation (conjugate-multiply onto quaternions)
+      5. XY translation
+      6. support_z lift (min-Z Gaussian → support surface)
+    """
+    if not os.path.exists(ply_path):
+        raise FileNotFoundError(f"mesh2splat PLY not found: {ply_path}")
+
+    plydata = plyfile.PlyData.read(ply_path)
+    v = plydata["vertex"]
+
+    means = np.stack([v["x"], v["y"], v["z"]], axis=1).astype(np.float64)        # (N,3)
+    log_scales = np.stack([v["scale_0"], v["scale_1"], v["scale_2"]], axis=1).astype(np.float64)  # (N,3) log
+    quats_wxyz = np.stack([v["rot_0"], v["rot_1"], v["rot_2"], v["rot_3"]], axis=1).astype(np.float64)  # (N,4) w,x,y,z
+
+    dc = np.stack([v["f_dc_0"], v["f_dc_1"], v["f_dc_2"]], axis=1).astype(np.float32)  # (N,3) SH-DC
+
+    rest_keys = [f"f_rest_{i}" for i in range(45) if f"f_rest_{i}" in v.data.dtype.names]
+    if rest_keys:
+        rest = np.stack([v[k] for k in rest_keys], axis=1).astype(np.float32)   # (N,45)
+    else:
+        rest = np.zeros((len(means), 45), dtype=np.float32)
+
+    opacities = v["opacity"].astype(np.float32).reshape(-1, 1)                   # (N,1) logit
+
+    # ── 1. Centre ────────────────────────────────────────────────────────
+    obj_min = means.min(axis=0)
+    obj_max = means.max(axis=0)
+    obj_center = (obj_min + obj_max) / 2.0
+    means = means - obj_center
+
+    # ── 2. Coordinate conversion  [X, Y, Z] → [X, -Z, Y] ───────────────
+    means = ((_COORD_CONV @ means.T).T).astype(np.float64)
+
+    # Rotate each Gaussian's orientation by the same coord-change:
+    # R_new = R_coord @ R_old @ R_coord^T  (basis change, not object rotation)
+    quats_wxyz = _transform_quats_by_matrix(quats_wxyz, _COORD_CONV)
+
+    # ── 3. Uniform scale ─────────────────────────────────────────────────
+    extent_max = float(max((obj_max - obj_min).max(), 1e-6))
+    if target_scale is not None:
+        mul = float(target_scale * scale_factor / extent_max)
+        means = means * mul
+        log_scales = log_scales + math.log(max(mul, 1e-8))
+
+    # ── 4. Optional placement rotation ───────────────────────────────────
+    if rotation is not None:
+        R = np.asarray(rotation, dtype=np.float64)
+        means = (R @ means.T).T
+        # Object rotation: R_new = R_place @ R_old  (left-multiply)
+        quats_wxyz = _left_multiply_quats(quats_wxyz, R)
+
+    # ── 5. XY translation ────────────────────────────────────────────────
+    if translation is not None:
+        means = means + np.asarray(translation, dtype=np.float64)
+
+    # ── 6. support_z lift ────────────────────────────────────────────────
+    if support_z is not None and means.size > 0:
+        min_z = float(means[:, 2].min())
+        means[:, 2] += float(support_z - min_z)
+
+    features_dc   = torch.tensor(dc, dtype=torch.float32).unsqueeze(1)          # (N,1,3)
+    features_rest = torch.tensor(rest.reshape(-1, 15, 3), dtype=torch.float32)  # (N,15,3)
+
+    return {
+        "means":        torch.tensor(means, dtype=torch.float32),
+        "scales":       torch.tensor(log_scales, dtype=torch.float32),
+        "quats":        torch.tensor(quats_wxyz, dtype=torch.float32),
+        "features_dc":  features_dc,
+        "features_rest": features_rest,
+        "opacities":    torch.tensor(opacities, dtype=torch.float32),
+    }
+
+
+def _transform_quats_by_matrix(quats_wxyz: np.ndarray, R: np.ndarray) -> np.ndarray:
+    """Apply a coordinate-system change R to an array of (w,x,y,z) quaternions.
+
+    Implements the basis-change formula: R_new = R @ R_old @ R^T,
+    expressed as quaternion sandwich: q_new = q_R * q_old * q_R_inv.
+    """
+    q_xyzw = np.concatenate([quats_wxyz[:, 1:4], quats_wxyz[:, 0:1]], axis=1)
+    R_objs = ScipyRotation.from_quat(q_xyzw)
+    R_change = ScipyRotation.from_matrix(R)
+    R_new = R_change * R_objs * R_change.inv()
+    q_new_xyzw = R_new.as_quat()
+    return np.concatenate([q_new_xyzw[:, 3:4], q_new_xyzw[:, 0:3]], axis=1).astype(np.float32)
+
+
+def _left_multiply_quats(quats_wxyz: np.ndarray, R: np.ndarray) -> np.ndarray:
+    """Left-multiply quaternions by rotation matrix R (object rotation in world space).
+
+    Implements: R_new = R @ R_old  →  q_new = q_R * q_old.
+    """
+    q_xyzw = np.concatenate([quats_wxyz[:, 1:4], quats_wxyz[:, 0:1]], axis=1)
+    R_objs = ScipyRotation.from_quat(q_xyzw)
+    R_place = ScipyRotation.from_matrix(R)
+    R_new = R_place * R_objs
+    q_new_xyzw = R_new.as_quat()
+    return np.concatenate([q_new_xyzw[:, 3:4], q_new_xyzw[:, 0:3]], axis=1).astype(np.float32)
 
 
 def _run_cmd(cmd: List[str], cwd: Optional[str] = None) -> None:

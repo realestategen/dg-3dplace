@@ -54,11 +54,11 @@ generate_obj_from_prompt_image = _TWO_D_THREE_D_MODULE.generate_obj_from_prompt_
 generate_obj_from_cutout_image = _TWO_D_THREE_D_MODULE.generate_obj_from_cutout_image
 glb_to_gaussians = _load_glb_to_gaussians()
 
-CKPT_PATH = "ckpt/room.ckpt"
+CKPT_PATH = "ckpt/bench_park.ckpt"
 RENDER_W, RENDER_H = 1280, 720
 NUM_CAMERAS = 15
 FOV_DEG = 60.0
-ORBIT_SCALE = 0.06       # fraction of scene extent for orbit radius
+ORBIT_SCALE = 0.008       # fraction of scene extent for orbit radius
 CAMERA_HEIGHT_OFFSET = 0.0  # keep horizontal view
 OPACITY_THRESHOLD = 0.1
 HEIGHT_TOLERANCE = 0.15      # for surface filtering

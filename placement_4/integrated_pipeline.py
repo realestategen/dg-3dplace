@@ -13,7 +13,7 @@ import gsplat
 from gsplat import rasterization
 import time
 import psutil
-
+import importlib.util as _ilu
 # ══════════════════════════════════════════════════════════════════════
 # Configuration
 # ══════════════════════════════════════════════════════════════════════
@@ -27,6 +27,8 @@ import shutil
 import importlib.util
 import inspect
 from gemini_image_gen import generate_diffusion_image_with_gemini
+from ckpt_to_ply import ckpt_to_ply
+from camera_selector import run_interactive_camera_selector
 
 
 def _load_two_d_three_d_module():
@@ -46,15 +48,30 @@ def _load_glb_to_gaussians():
         raise ImportError(f"Unable to load module from {module_path}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
-    return module.glb_to_gaussians
+    return module.glb_to_gaussians, module.mesh2splat_ply_to_gaussians
+
+def _load_ckpt_to_ply():
+    path = os.path.join(os.path.dirname(__file__), "ckpt_to_ply.py")
+    spec = _ilu.spec_from_file_location("ckpt_to_ply", path)
+    mod  = _ilu.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod.ckpt_to_ply
+
+def _load_camera_selector():
+    path = os.path.join(os.path.dirname(__file__), "camera_selector.py")
+    spec = _ilu.spec_from_file_location("camera_selector", path)
+    mod  = _ilu.module_from_spec(spec); spec.loader.exec_module(mod)
+    return mod.run_interactive_camera_selector
+
+ckpt_to_ply                   = _load_ckpt_to_ply()
+run_interactive_camera_selector = _load_camera_selector()
 
 
 _TWO_D_THREE_D_MODULE = _load_two_d_three_d_module()
 generate_obj_from_prompt_image = _TWO_D_THREE_D_MODULE.generate_obj_from_prompt_image
 generate_obj_from_cutout_image = _TWO_D_THREE_D_MODULE.generate_obj_from_cutout_image
-glb_to_gaussians = _load_glb_to_gaussians()
+glb_to_gaussians, mesh2splat_ply_to_gaussians = _load_glb_to_gaussians()
 
-CKPT_PATH = "ckpt/room.ckpt"
+CKPT_PATH = "ckpt/bench_park.ckpt"
 RENDER_W, RENDER_H = 1280, 720
 NUM_CAMERAS = 15
 FOV_DEG = 60.0
@@ -370,112 +387,51 @@ def make_camera_from_config(scene_center, orbit_radius, height_offset, azimuth,
 
 
 # ══════════════════════════════════════════════════════════════════════
-# User-driven camera selection and rendering
+# User-driven camera selection — interactive 3DGS web viewer
 # ══════════════════════════════════════════════════════════════════════
 def select_camera_and_render():
-    print("\n--- Camera Selection & Rendering ---")
-    print("Loading checkpoint...")
-    ckpt = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
+    """Export scene to PLY, open interactive browser viewer, block until
+    user selects a camera, then save camera_state.pt."""
+    print("\n--- Interactive Camera Selection ---")
+
+    ply_path = os.path.join(SESSION_DIR, "scene_for_viewer.ply")
+    print("Exporting scene to PLY for viewer…")
+    ckpt_to_ply(CKPT_PATH, ply_path)
+
+    camera_state = run_interactive_camera_selector(
+        ply_path=ply_path,
+        session_dir=SESSION_DIR,
+        camera_state_path=CAMERA_STATE_PATH,
+        render_w=RENDER_W,
+        render_h=RENDER_H,
+        fov_deg=FOV_DEG,
+        port=7860,
+    )
+
+    # Render the selected view with gsplat for pipeline validation
+    print("Rendering selected view with gsplat…")
+    ckpt  = torch.load(CKPT_PATH, map_location="cpu", weights_only=False)
     state = ckpt["pipeline"]
-    means = state["_model.means"].numpy()
+    means       = state["_model.means"].numpy()
+    scales      = state["_model.scales"].numpy()
+    quats       = state["_model.quats"].numpy()
     features_dc = state["_model.features_dc"].numpy()
-    scales = state["_model.scales"].numpy()
-    quats = state["_model.quats"].numpy()
     opacities_raw = state["_model.opacities"].numpy()
-    opacities = (1 / (1 + np.exp(-opacities_raw))).squeeze()
 
-    vis_mask = opacities > OPACITY_THRESHOLD
-    vis_means = means[vis_mask]
-    scene_center = vis_means.mean(axis=0)
-    scene_extent = vis_means.max(axis=0) - vis_means.min(axis=0)
-
-    orbit_radius = float(np.linalg.norm(scene_extent)) * ORBIT_SCALE
-    camera_height_offset = 0.3
-    azimuth_angles = np.linspace(0, 2 * math.pi, NUM_CAMERAS, endpoint=False)
-    fov_rad = math.radians(FOV_DEG)
-
-    cameras = []
-    for i, azimuth in enumerate(azimuth_angles):
-        cam = make_camera_from_config(
-            scene_center, orbit_radius, camera_height_offset, azimuth,
-            cos_axis=0, sin_axis=1, fixed_axis=2,  # orbit XY, fix Z
-            world_up_vec=[0, 0, 1],
-            fov_rad=fov_rad, w=RENDER_W, h=RENDER_H,
-        )
-        cameras.append(cam)
-        angle_deg = math.degrees(azimuth)
-        print(f"  Camera {i + 1}: azimuth={angle_deg:.0f}°, pos={np.round(cam.position, 3)}")
-
-    print(f"Generated {len(cameras)} cameras around scene center")
-
-    # Render all camera angles
-    rendered_images = []
-    for i, cam in enumerate(cameras):
-        print(f"  Rendering camera {i + 1}/{len(cameras)}...")
-        img, alpha = render_gaussians(means, scales, quats, features_dc, opacities_raw, cam)
-        rendered_images.append(img)
-        Image.fromarray((img * 255).astype(np.uint8)).save(os.path.join(SESSION_DIR, f"camera_view_{i}.png"))
-        coverage = 100 * (alpha > 0.5).sum() / alpha.size
-        print(f"    alpha coverage: {coverage:.1f}%")
-
-    print(f"Saved {len(cameras)} camera views.")
-
-    # Save grid of renders
-    ncols = min(3, len(rendered_images))
-    nrows = math.ceil(len(rendered_images) / ncols)
-    fig, axes = plt.subplots(nrows, ncols, figsize=(7 * ncols, 5 * nrows))
-    axes = np.atleast_2d(np.array(axes).reshape(nrows, ncols))
-    for idx, img in enumerate(rendered_images):
-        r, c = divmod(idx, ncols)
-        axes[r][c].imshow(img)
-        axes[r][c].set_title(f"Camera {idx + 1} — {math.degrees(azimuth_angles[idx]):.0f}°")
-        axes[r][c].axis("off")
-    for idx in range(len(rendered_images), nrows * ncols):
-        r, c = divmod(idx, ncols)
-        axes[r][c].axis("off")
-    plt.suptitle("Multi-Angle Renders of Scene Center", fontsize=14)
-    plt.tight_layout()
-    plt.savefig(os.path.join(SESSION_DIR, "renders_grid.png"), dpi=150)
-    plt.close()
-    print(f"Saved renders_grid.png in {SESSION_DIR}")
-
-    # User selects camera
-    cam_idx = int(input(f"Select camera index (1-{len(cameras)}): ")) - 1
-    if cam_idx < 0 or cam_idx >= len(cameras):
-        print("Invalid index. Defaulting to 0.")
-        cam_idx = 0
-
-    selected_cam = cameras[cam_idx]
-    selected_azimuth = float(azimuth_angles[cam_idx])
-    camera_state = {
-        "cam_idx": int(cam_idx),
-        "azimuth_rad": selected_azimuth,
-        "azimuth_deg": float(math.degrees(selected_azimuth)),
-        "intrinsics": selected_cam.get_K(),
-        "extrinsics_w2c": selected_cam.w2c,
-        "c2w": selected_cam.c2w,
-        "position": selected_cam.position,
-        "wxyz": selected_cam.wxyz,
-        "render_width": int(selected_cam.width),
-        "render_height": int(selected_cam.height),
-        "fov_rad": float(selected_cam.fov_rad),
-        "scene_center": scene_center,
-        "scene_extent": scene_extent,
-        "orbit_radius": float(orbit_radius),
-        "camera_height_offset": float(camera_height_offset),
-        "num_cameras": int(NUM_CAMERAS),
-    }
-    torch.save(camera_state, CAMERA_STATE_PATH)
-
-    selected_img = rendered_images[cam_idx]
+    cam = SceneCamera(
+        position=camera_state["position"],
+        wxyz=camera_state["wxyz"],
+        fov_rad=float(camera_state["fov_rad"]),
+        width=int(camera_state["render_width"]),
+        height=int(camera_state["render_height"]),
+    )
+    img, _ = render_gaussians(means, scales, quats, features_dc, opacities_raw, cam)
     selected_view_path = os.path.join(SESSION_DIR, "selected_camera_view.png")
-    Image.fromarray((selected_img * 255).astype(np.uint8)).save(selected_view_path)
-    print(f"Saved selected view as selected_camera_view.png (camera {cam_idx + 1}) in {SESSION_DIR}")
-    print(f"Saved selected camera metadata to {CAMERA_STATE_PATH}")
+    Image.fromarray((img * 255).astype(np.uint8)).save(selected_view_path)
+    print(f"Saved selected view → {selected_view_path}")
 
     camera_state["selected_view_path"] = selected_view_path
     torch.save(camera_state, CAMERA_STATE_PATH)
-
     return camera_state
 
 
@@ -1188,24 +1144,69 @@ def add_object_to_scene(
     save_depth_map_png(depth_map, depth_png_path)
     print(f"Saved depth map to {depth_png_path} (raw: {depth_png_path}.raw.npy)")
 
-    # Sample at bbox bottom-centre: the base of the object in the image
-    bbox_u = (x1 + x2) / 2.0
-    bbox_v = y2   # bottom edge of the detected bbox
+    # ── Placement via mask + SVD plane fit ──────────────────────────────
+    # Load the object mask saved earlier. Every mask pixel gives one depth
+    # sample → one world-space point. SVD fits the best plane through all
+    # those points; inliers (≤5 cm from plane) are the actual flat surface.
+    # Median XYZ of inliers → exact support point, immune to rays that exit
+    # the surface and land on background geometry below.
+    # Falls back to bbox-bottom-centre if the mask file is missing.
+    mask_path_for_placement = os.path.join(SESSION_DIR, "added_object_mask.png")
+    world_pt = None
+    support_z = None
 
-    world_pt = unproject_depth_to_world(bbox_u, bbox_v, depth_map, cam, window=7)
-    if world_pt is None:
-        print(
-            "[!] Depth unproject returned no valid depth at bbox bottom-centre "
-            "(pixel may be occluded or outside the scene). Cannot place object."
-        )
-        return
+    if os.path.exists(mask_path_for_placement):
+        mask_img = np.array(Image.open(mask_path_for_placement).convert("L"))
+        placement_mask = mask_img > 127                      # bool (H, W)
 
-    support_z = float(world_pt[2])
-    translation = np.array([float(world_pt[0]), float(world_pt[1]), 0.0], dtype=np.float32)
-    print(
-        f"Depth-map placement: sample pixel=({bbox_u:.1f}, {bbox_v:.1f}), "
-        f"world=({world_pt[0]:.4f}, {world_pt[1]:.4f}, {world_pt[2]:.4f})"
-    )
+        H_img, W_img = depth_map.shape
+        vs_m, us_m = np.where(placement_mask)
+        if len(us_m) >= 20:
+            ds_m = depth_map[
+                np.clip(vs_m, 0, H_img - 1),
+                np.clip(us_m, 0, W_img - 1)
+            ].astype(np.float64)
+            valid = ds_m > 0.01
+            us_v = us_m[valid].astype(np.float64)
+            vs_v = vs_m[valid].astype(np.float64)
+            ds_v = ds_m[valid]
+
+            if len(ds_v) >= 20:
+                c2w_cv = np.linalg.inv(cam.w2c)
+                Xc = (us_v - cam.cx) * ds_v / cam.fx
+                Yc = (vs_v - cam.cy) * ds_v / cam.fy
+                pts_c = np.stack([Xc, Yc, ds_v, np.ones_like(ds_v)], axis=1)
+                world_pts = (c2w_cv @ pts_c.T).T[:, :3]     # (N, 3)
+
+                ctr = world_pts.mean(axis=0)
+                _, _, Vt = np.linalg.svd(world_pts - ctr, full_matrices=False)
+                plane_n = Vt[-1]
+                if plane_n[2] < 0:
+                    plane_n = -plane_n
+
+                dist = np.abs((world_pts - ctr) @ plane_n)
+                inliers = dist < 0.05                        # 5 cm threshold
+                surf = world_pts[inliers] if inliers.sum() >= 5 else world_pts
+
+                support_z = float(np.median(surf[:, 2]))
+                pos_x = float(np.median(surf[:, 0]))
+                pos_y = float(np.median(surf[:, 1]))
+                print(
+                    f"Placement (mask+SVD): {inliers.sum()}/{len(world_pts)} inliers, "
+                    f"support_z={support_z:.4f}, XY=({pos_x:.4f}, {pos_y:.4f})"
+                )
+
+    if support_z is None:
+        # Fallback: single pixel at bbox bottom-centre, 5×5 median window
+        world_pt = unproject_depth_to_world((x1 + x2) / 2.0, float(y2), depth_map, cam, window=5)
+        if world_pt is None:
+            print("[!] Depth unproject returned no valid depth. Cannot place object.")
+            return
+        support_z = float(world_pt[2])
+        pos_x, pos_y = float(world_pt[0]), float(world_pt[1])
+        print(f"Placement (fallback bbox-centre): support_z={support_z:.4f}")
+
+    translation = np.array([pos_x, pos_y, 0.0], dtype=np.float32)
 
     num_gaussians = 100000
     print(f"support_z={support_z:.4f}, translation XY=({translation[0]:.4f}, {translation[1]:.4f})")
@@ -1220,20 +1221,36 @@ def add_object_to_scene(
         print(f"Textured GLB not found; got '{mesh_for_color}'. Falling back to previous path may reduce color fidelity.")
 
     try:
-        script_dir = os.path.dirname(os.path.abspath(__file__))
-        native_train_script_path = os.path.join(script_dir, "train_object_gs_native.py")
-        user_train_template = os.environ.get("OBJECT_GS_TRAIN_CMD_TEMPLATE", "").strip()
-        train_num_gaussians = int(os.environ.get("OBJECT_GS_TRAIN_NUM_GAUSSIANS", "30000"))
-        train_num_gaussians = max(20000, min(50000, train_num_gaussians))
-        trainer_cmd_template = user_train_template or (
-            f"python {native_train_script_path} --mesh {{mesh_path}} --images {{images_dir}} "
-            f"--camera-json {{camera_json}} --sparse {{sparse_dir}} --output {{output_dir}} "
-            f"--steps {{steps}} --num-gaussians {train_num_gaussians}"
-        )
-
-        use_train_mode = True
-
-        if use_train_mode:
+        # ── mesh2splat path (preferred — full texture + per-splat orientation) ──
+        # Place a mesh2splat-exported PLY alongside the GLB with the same stem:
+        #   e.g.  object.glb  →  object.ply
+        # The pipeline picks it up automatically; falls back to glb_to_gaussians
+        # if no PLY is found.
+        mesh2splat_ply = os.path.splitext(mesh_for_color)[0] + ".ply"
+        if os.path.exists(mesh2splat_ply):
+            print(f"mesh2splat PLY found: {mesh2splat_ply} — using textured splat loader.")
+            object_gaussians = mesh2splat_ply_to_gaussians(
+                ply_path=mesh2splat_ply,
+                target_scale=float(scale),
+                scale_factor=0.4,
+                rotation=None,
+                translation=translation,
+                support_z=support_z,
+            )
+            print(f"Loaded {object_gaussians['means'].shape[0]:,} Gaussians from mesh2splat PLY.")
+        else:
+            # ── glb_to_gaussians fallback ─────────────────────────────────────
+            print("No mesh2splat PLY found — falling back to glb_to_gaussians.")
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            native_train_script_path = os.path.join(script_dir, "train_object_gs_native.py")
+            user_train_template = os.environ.get("OBJECT_GS_TRAIN_CMD_TEMPLATE", "").strip()
+            train_num_gaussians = int(os.environ.get("OBJECT_GS_TRAIN_NUM_GAUSSIANS", "30000"))
+            train_num_gaussians = max(20000, min(50000, train_num_gaussians))
+            trainer_cmd_template = user_train_template or (
+                f"python {native_train_script_path} --mesh {{mesh_path}} --images {{images_dir}} "
+                f"--camera-json {{camera_json}} --sparse {{sparse_dir}} --output {{output_dir}} "
+                f"--steps {{steps}} --num-gaussians {train_num_gaussians}"
+            )
             try:
                 object_gaussians = glb_to_gaussians(
                     glb_path=mesh_for_color,
@@ -1256,8 +1273,7 @@ def add_object_to_scene(
                 )
                 print("Using train-mode GLB->GS conversion.")
             except Exception as train_err:
-                print(f"[!] Train-mode conversion failed: {train_err}")
-                print("[!] Falling back to sample-mode conversion.")
+                print(f"[!] Train-mode conversion failed: {train_err}. Falling back to sample mode.")
                 object_gaussians = glb_to_gaussians(
                     glb_path=mesh_for_color,
                     num_gaussians=num_gaussians,
@@ -1271,20 +1287,6 @@ def add_object_to_scene(
                     work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
                     conversion_mode="sample",
                 )
-        else:
-            object_gaussians = glb_to_gaussians(
-                glb_path=mesh_for_color,
-                num_gaussians=num_gaussians,
-                target_scale=float(scale),
-                scale_factor=0.4,
-                rotation=None,
-                translation=translation,
-                support_z=support_z,
-                opacity_logit=5.0,
-                run_render_colmap=False,
-                work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
-                conversion_mode="sample",
-            )
 
         means_object = object_gaussians["means"]
         scales_object = object_gaussians["scales"]
@@ -1292,9 +1294,9 @@ def add_object_to_scene(
         features_dc_object = object_gaussians["features_dc"]
         features_rest_object = object_gaussians["features_rest"]
         opacities_object = object_gaussians["opacities"]
-        print(f"Generated {means_object.shape[0]} textured object gaussians from GLB pipeline.")
+        print(f"Object Gaussians ready: {means_object.shape[0]:,}")
     except Exception as e:
-        print(f"Failed converting GLB to gaussians: {e}")
+        print(f"Failed converting mesh to Gaussians: {e}")
         return
 
     features_dc = state["_model.features_dc"]
@@ -1372,6 +1374,10 @@ def add_object_to_scene(
             f.write(f"GPU: {gpu_name}\n")
             f.write(f"GPU memory used (MB): {(gpu_mem_end - gpu_mem_start) / 1024 / 1024:.2f}\n")
     print(f"Resource report saved to {report_path}")
+    
+    final_ply = os.path.join(SESSION_DIR, "final_scene_with_object.ply")
+    ckpt_to_ply(OUTPUT_PATH, final_ply)
+    print(f"Final scene PLY exported → {final_ply}")
 
 
 def render_final_view_with_saved_camera(ckpt_path, camera_state_path, session_dir, output_name="final_view_with_object.png"):
