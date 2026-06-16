@@ -440,6 +440,358 @@ def select_object_gaussians_depth_aware(
 
 
 # ══════════════════════════════════════════════════════════════════════
+# Robust support-surface estimation, scale & rotation
+# ══════════════════════════════════════════════════════════════════════
+# The depth-aware gaussian selection above (select_object_gaussians_depth_aware)
+# already does the hard work: it returns the set of *real, already-correctly-
+# positioned* 3D Gaussians that occupy the detected footprint at the right
+# occlusion-consistent depth (object_indices / target_means). That point
+# cloud IS the ground truth for where and how big the inserted object should
+# be — so placement should fit directly to *its* shape, not search for some
+# other, unrelated patch of scene geometry. The estimators below:
+#
+#   1. fit_plane_ransac                — RANSAC-then-SVD plane fit, robust
+#                                         to outlier points (furniture
+#                                         edges, noisy silhouette pixels).
+#   2. estimate_support_surface_robust — fits the support plane DIRECTLY
+#                                         through target_means (the
+#                                         filtered gaussians themselves).
+#                                         This both locates the object
+#                                         (XY = robust centroid of those
+#                                         same gaussians, so the new object
+#                                         is centered exactly where the
+#                                         filtered gaussians are) and
+#                                         measures it (the plane-projected
+#                                         footprint of those gaussians,
+#                                         below). Only falls back to the
+#                                         camera depth-map + object mask
+#                                         (unprojected to world points) when
+#                                         there are too few filtered
+#                                         gaussians to fit a plane reliably.
+#                                         A full plane (point + normal,
+#                                         instead of one scalar height)
+#                                         means a tilted support (ramp,
+#                                         slope, tilted tabletop) is
+#                                         captured automatically.
+#   3. compute_surface_alignment_rotation — shortest-arc rotation aligning
+#                                         the object's local "up" to the
+#                                         fitted surface normal, so it
+#                                         tilts to match a ramp/slope
+#                                         instead of always standing
+#                                         perfectly vertical.
+#   4. estimate_object_scale_robust    — the object's real-world size is
+#                                         the robust (percentile-trimmed)
+#                                         footprint extent of target_means
+#                                         projected onto their own fitted
+#                                         plane — i.e. "make the new object
+#                                         cover the filtered gaussians"
+#                                         taken literally. The independent
+#                                         2D-silhouette + depth back-
+#                                         projection estimate is kept only
+#                                         as a logged cross-check, not
+#                                         blended in — letting it dominate
+#                                         the fused value previously made
+#                                         the placed object collapse to a
+#                                         much smaller size whenever the
+#                                         mask/depth estimate ran low.
+# ══════════════════════════════════════════════════════════════════════
+def fit_plane_ransac(points, dist_thresh=0.03, max_iters=300, min_inliers=8, seed=0):
+    """RANSAC plane fit over a 3D point cloud.
+
+    Repeatedly samples 3 points to hypothesize a plane, scores it by inlier
+    count (points within `dist_thresh` of the plane), then refines the
+    winning inlier set with an SVD total-least-squares fit for the final
+    point/normal. RANSAC is what makes this robust to outliers (e.g. a
+    chair leg or a noisy stray gaussian poking through the candidate
+    region) — a plain SVD fit on the raw point set has no outlier
+    rejection and would be dragged toward them.
+
+    Returns (point_on_plane, unit_normal, inlier_mask) or None if the point
+    cloud is too small / too degenerate to fit a plane.
+    """
+    pts = np.asarray(points, dtype=np.float64)
+    n = len(pts)
+    if n < 3:
+        return None
+
+    rng = np.random.default_rng(seed)
+    best_inliers = None
+    best_count = -1
+    for _ in range(max_iters):
+        idx = rng.choice(n, size=3, replace=False)
+        p0, p1, p2 = pts[idx]
+        normal = np.cross(p1 - p0, p2 - p0)
+        norm_len = np.linalg.norm(normal)
+        if norm_len < 1e-9:
+            continue
+        normal = normal / norm_len
+        dist = np.abs((pts - p0) @ normal)
+        inliers = dist < dist_thresh
+        count = int(inliers.sum())
+        if count > best_count:
+            best_count = count
+            best_inliers = inliers
+
+    if best_inliers is None or best_count < min_inliers:
+        return None
+
+    inlier_pts = pts[best_inliers]
+    ctr = inlier_pts.mean(axis=0)
+    _, _, Vt = np.linalg.svd(inlier_pts - ctr, full_matrices=False)
+    normal = Vt[-1]
+    normal = normal / (np.linalg.norm(normal) + 1e-12)
+    if normal[2] < 0:
+        normal = -normal
+    return ctr, normal, best_inliers
+
+
+def _plane_tangent_basis(normal):
+    """Return two unit vectors (u, v) spanning the plane perpendicular to
+    `normal`, used to project 3D points into 2D in-plane coordinates."""
+    normal = np.asarray(normal, dtype=np.float64)
+    normal = normal / (np.linalg.norm(normal) + 1e-12)
+    helper = np.array([1.0, 0.0, 0.0]) if abs(normal[0]) < 0.9 else np.array([0.0, 1.0, 0.0])
+    u = np.cross(normal, helper)
+    u = u / (np.linalg.norm(u) + 1e-12)
+    v = np.cross(normal, u)
+    return u, v
+
+
+def _clamp_tilt(normal, max_tilt_deg):
+    """Blend `normal` toward world-up if it tilts more than max_tilt_deg.
+
+    Guards against a spurious/degenerate plane fit (e.g. too few, nearly
+    colinear points) producing a wild orientation.
+    """
+    up = np.array([0.0, 0.0, 1.0])
+    cos_angle = float(np.clip(np.dot(normal, up), -1.0, 1.0))
+    raw_tilt_deg = math.degrees(math.acos(cos_angle))
+    if raw_tilt_deg <= max_tilt_deg:
+        return normal, raw_tilt_deg
+
+    axis = np.cross(up, normal)
+    axis_len = np.linalg.norm(axis)
+    if axis_len < 1e-9:
+        return normal, raw_tilt_deg
+    axis = axis / axis_len
+    angle = math.radians(max_tilt_deg)
+    clamped = (
+        up * math.cos(angle)
+        + np.cross(axis, up) * math.sin(angle)
+        + axis * np.dot(axis, up) * (1 - math.cos(angle))
+    )
+    return clamped / (np.linalg.norm(clamped) + 1e-12), raw_tilt_deg
+
+
+def estimate_support_surface_robust(
+    means, object_indices, cam, depth_map, placement_mask,
+    dist_thresh=0.03, max_tilt_deg=35.0, pct_trim=5.0,
+):
+    """Fit the support surface directly to the filtered/detected gaussians.
+
+    `object_indices` (from select_object_gaussians_depth_aware) are already
+    occlusion-consistent, depth/MAD-filtered, mask-restricted real 3D
+    points at the correct location — the best available evidence of where
+    the new object goes and how big it is. So the primary estimate fits a
+    RANSAC plane directly to `means[object_indices]` and derives both
+    position (robust centroid of those same points) and footprint size
+    (their plane-projected, percentile-trimmed extent) from it — i.e. the
+    new object is sized and centered to literally cover them.
+
+    Only falls back to the camera depth-map + object mask (unprojected to
+    world points) when there are too few filtered gaussians to fit a plane
+    directly (e.g. a very thin/sparse detection).
+
+    Returns a dict {point, normal, footprint_size, source, raw_tilt_deg,
+    num_points} or None if neither source yields a usable plane.
+    """
+    target_means = means[object_indices]
+
+    plane = None
+    source = None
+    if len(target_means) >= 8:
+        plane = fit_plane_ransac(
+            target_means, dist_thresh=dist_thresh,
+            min_inliers=max(8, len(target_means) // 4),
+        )
+        if plane is not None:
+            source = "filtered_gaussians"
+
+    footprint_pts = None
+    if plane is None:
+        # Fallback: depth-map + mask unprojected to world points.
+        if placement_mask is not None and placement_mask.any():
+            H_img, W_img = depth_map.shape
+            vs_m, us_m = np.where(placement_mask)
+            if len(us_m) >= 20:
+                ds_m = depth_map[
+                    np.clip(vs_m, 0, H_img - 1), np.clip(us_m, 0, W_img - 1)
+                ].astype(np.float64)
+                valid = ds_m > 0.01
+                if valid.sum() >= 20:
+                    us_v = us_m[valid].astype(np.float64)
+                    vs_v = vs_m[valid].astype(np.float64)
+                    ds_v = ds_m[valid]
+                    c2w_cv = np.linalg.inv(cam.w2c)
+                    Xc = (us_v - cam.cx) * ds_v / cam.fx
+                    Yc = (vs_v - cam.cy) * ds_v / cam.fy
+                    pts_c = np.stack([Xc, Yc, ds_v, np.ones_like(ds_v)], axis=1)
+                    world_pts = (c2w_cv @ pts_c.T).T[:, :3]
+                    plane = fit_plane_ransac(world_pts, dist_thresh=dist_thresh)
+                    if plane is not None:
+                        source = "depth_map"
+                        footprint_pts = world_pts[plane[2]]
+    else:
+        footprint_pts = target_means[plane[2]]
+
+    if plane is None or footprint_pts is None or len(footprint_pts) < 4:
+        return None
+
+    point, normal, _ = plane
+    if normal[2] < 0:
+        normal = -normal
+    normal, raw_tilt_deg = _clamp_tilt(normal, max_tilt_deg)
+
+    # Position: robust (median) centroid of the footprint points themselves
+    # — guarantees the new object is centered exactly where the filtered
+    # gaussians are, per-axis, ignoring residual stragglers.
+    pos_xy = np.median(footprint_pts[:, :2], axis=0)
+
+    # Height: evaluate the fitted plane at that XY (consistent with the
+    # normal, rather than just the raw median Z, which would be slightly
+    # off-plane for a tilted surface with an asymmetric point distribution).
+    if abs(normal[2]) > 1e-6:
+        z_at_pos = point[2] - (
+            normal[0] * (pos_xy[0] - point[0]) + normal[1] * (pos_xy[1] - point[1])
+        ) / normal[2]
+    else:
+        z_at_pos = point[2]
+    anchor_point = np.array([pos_xy[0], pos_xy[1], z_at_pos])
+
+    # Footprint size: project the same points onto their own fitted plane
+    # and take a percentile-trimmed (robust to the few residual outliers)
+    # extent along each in-plane axis; the larger of the two is the
+    # object's "longest dimension" scale (matches how target_scale is used
+    # downstream — normalized against the mesh's own largest dimension).
+    u_axis, v_axis = _plane_tangent_basis(normal)
+    centered = footprint_pts - footprint_pts.mean(axis=0)
+    pu = centered @ u_axis
+    pv = centered @ v_axis
+    eu = float(np.percentile(pu, 100 - pct_trim) - np.percentile(pu, pct_trim))
+    ev = float(np.percentile(pv, 100 - pct_trim) - np.percentile(pv, pct_trim))
+    footprint_size = max(eu, ev)
+
+    return {
+        "point": anchor_point,
+        "normal": normal,
+        "footprint_size": footprint_size,
+        "source": source,
+        "raw_tilt_deg": raw_tilt_deg,
+        "num_points": int(len(footprint_pts)),
+    }
+
+
+def compute_surface_alignment_rotation(normal):
+    """Shortest-arc rotation matrix mapping world-up [0,0,1] onto `normal`.
+
+    This is the *minimal* rotation that tilts an upright object to rest
+    flush against a sloped surface — it introduces no extra yaw, only the
+    tilt strictly required to match the surface's normal direction.
+    """
+    up = np.array([0.0, 0.0, 1.0])
+    n = np.asarray(normal, dtype=np.float64)
+    n = n / (np.linalg.norm(n) + 1e-12)
+    v = np.cross(up, n)
+    s = np.linalg.norm(v)
+    c = float(np.dot(up, n))
+    if s < 1e-8:
+        if c > 0:
+            return np.eye(3)
+        # normal points straight down — 180° flip about any horizontal axis.
+        return R.from_rotvec(np.pi * np.array([1.0, 0.0, 0.0])).as_matrix()
+    vx = np.array([
+        [0, -v[2], v[1]],
+        [v[2], 0, -v[0]],
+        [-v[1], v[0], 0],
+    ])
+    rot_matrix = np.eye(3) + vx + vx @ vx * ((1 - c) / (s ** 2))
+    return rot_matrix
+
+
+def estimate_object_scale_robust(
+    footprint_size, target_extent, mask, bbox, support_point, cam, fallback_scale=0.3,
+):
+    """Real-world object scale, primarily from the filtered gaussians'
+    own footprint — falling back only when that's unavailable.
+
+    Precedence:
+      1. `footprint_size` — the plane-projected, percentile-trimmed extent
+         of the filtered/detected gaussians themselves (from
+         estimate_support_surface_robust). This is literally "make the new
+         object's size cover the filtered gaussians' shape", grounded in
+         real 3D evidence at the correct depth.
+      2. `target_extent` — raw bounding-box extent of the depth-filtered
+         object gaussians (legacy fallback, used only if (1) is missing).
+      3. 2D-detected silhouette size + depth back-projection (pinhole
+         model): size_metres = size_pixels * depth / focal_length. Kept
+         only as a *logged cross-check* against whichever of (1)/(2) was
+         used — it is NOT blended into the final value, since doing so
+         previously let mask/depth noise drag the correct gaussian-based
+         scale down to "way smaller than reality".
+
+    Returns (scale, diagnostics_dict).
+    """
+    u, v, z, valid = cam.project(np.asarray(support_point, dtype=np.float64)[None, :])
+    depth = float(z[0]) if valid[0] else None
+
+    scale_2d = None
+    if depth is not None and depth > 0.05:
+        if mask is not None and mask.any():
+            ys, xs = np.where(mask)
+            w_px = float(xs.max() - xs.min() + 1)
+            h_px = float(ys.max() - ys.min() + 1)
+        else:
+            x1, y1, x2, y2 = bbox
+            w_px, h_px = float(x2 - x1), float(y2 - y1)
+        real_w = w_px * depth / cam.fx
+        real_h = h_px * depth / cam.fy
+        scale_2d = max(real_w, real_h)
+
+    scale_gauss = float(min(target_extent[0], target_extent[1])) if target_extent is not None else None
+
+    diagnostics = {
+        "footprint_size": footprint_size,
+        "scale_gauss_bbox": scale_gauss,
+        "scale_2d_crosscheck": scale_2d,
+        "depth": depth,
+    }
+
+    if footprint_size is not None and footprint_size > 1e-4:
+        scale = footprint_size
+        diagnostics["source"] = "filtered_gaussian_footprint"
+    elif scale_gauss is not None and scale_gauss > 1e-4:
+        scale = scale_gauss
+        diagnostics["source"] = "gaussian_bbox_fallback"
+    elif scale_2d is not None:
+        scale = scale_2d
+        diagnostics["source"] = "2d_backprojection_fallback"
+    else:
+        scale = fallback_scale
+        diagnostics["source"] = "fallback"
+
+    if scale_2d is not None and scale > 1e-6:
+        ratio = scale_2d / scale
+        if not (0.4 <= ratio <= 2.5):
+            diagnostics["warning"] = (
+                f"2D cross-check disagrees with chosen scale by {ratio:.2f}x "
+                f"— verify mask/detection quality."
+            )
+
+    diagnostics["final_scale"] = scale
+    return scale, diagnostics
+
+
+# ══════════════════════════════════════════════════════════════════════
 # Main pipeline
 # ══════════════════════════════════════════════════════════════════════
 def make_camera_from_config(scene_center, orbit_radius, height_offset, azimuth,
@@ -1272,67 +1624,57 @@ def add_object_to_scene(
     target_max = target_means.max(axis=0)
     target_center = target_means.mean(axis=0)
     target_extent = target_max - target_min
-    # Clamp scale to min(X, Y) to avoid oversize
-    scale = min(target_extent[0], target_extent[1])
 
-    # ── Placement via mask + SVD plane fit ──────────────────────────────
-    # depth_map and placement_mask were already computed up front (used for
-    # depth-aware gaussian selection above). Every mask pixel gives one
-    # depth sample → one world-space point. SVD fits the best plane through
-    # all those points; inliers (≤5 cm from plane) are the actual flat
-    # surface. Median XYZ of inliers → exact support point, immune to rays
-    # that exit the surface and land on background geometry below.
-    # Falls back to bbox-bottom-centre if the mask file is missing.
-    world_pt = None
-    support_z = None
-
-    if placement_mask is not None:
-        H_img, W_img = depth_map.shape
-        vs_m, us_m = np.where(placement_mask)
-        if len(us_m) >= 20:
-            ds_m = depth_map[
-                np.clip(vs_m, 0, H_img - 1),
-                np.clip(us_m, 0, W_img - 1)
-            ].astype(np.float64)
-            valid = ds_m > 0.01
-            us_v = us_m[valid].astype(np.float64)
-            vs_v = vs_m[valid].astype(np.float64)
-            ds_v = ds_m[valid]
-
-            if len(ds_v) >= 20:
-                c2w_cv = np.linalg.inv(cam.w2c)
-                Xc = (us_v - cam.cx) * ds_v / cam.fx
-                Yc = (vs_v - cam.cy) * ds_v / cam.fy
-                pts_c = np.stack([Xc, Yc, ds_v, np.ones_like(ds_v)], axis=1)
-                world_pts = (c2w_cv @ pts_c.T).T[:, :3]     # (N, 3)
-
-                ctr = world_pts.mean(axis=0)
-                _, _, Vt = np.linalg.svd(world_pts - ctr, full_matrices=False)
-                plane_n = Vt[-1]
-                if plane_n[2] < 0:
-                    plane_n = -plane_n
-
-                dist = np.abs((world_pts - ctr) @ plane_n)
-                inliers = dist < 0.05                        # 5 cm threshold
-                surf = world_pts[inliers] if inliers.sum() >= 5 else world_pts
-
-                support_z = float(np.median(surf[:, 2]))
-                pos_x = float(np.median(surf[:, 0]))
-                pos_y = float(np.median(surf[:, 1]))
-                print(
-                    f"Placement (mask+SVD): {inliers.sum()}/{len(world_pts)} inliers, "
-                    f"support_z={support_z:.4f}, XY=({pos_x:.4f}, {pos_y:.4f})"
-                )
-
-    if support_z is None:
-        # Fallback: single pixel at bbox bottom-centre, 5×5 median window
+    # ── Robust support-surface estimation ───────────────────────────────
+    # See estimate_support_surface_robust() docstring: fits the plane
+    # DIRECTLY through the filtered/detected gaussians (target_means) —
+    # the real, correctly-positioned 3D evidence at this location — so
+    # position and footprint size both come straight from "covering" that
+    # same point cloud. Only falls back to the camera depth-map + object
+    # mask when there are too few filtered gaussians to fit a plane.
+    surface = estimate_support_surface_robust(
+        means, object_indices, cam, depth_map, placement_mask,
+    )
+    if surface is not None:
+        support_point = surface["point"]
+        support_normal = surface["normal"]
+        footprint_size = surface["footprint_size"]
+        pos_x, pos_y = float(support_point[0]), float(support_point[1])
+        print(
+            f"Support surface ({surface['source']}): point={support_point}, "
+            f"normal={support_normal}, raw_tilt={surface['raw_tilt_deg']:.1f}deg, "
+            f"footprint_size={footprint_size:.4f} ({surface['num_points']} pts)"
+        )
+    else:
+        # Fallback: single pixel at bbox bottom-centre, 5×5 median window,
+        # flat (vertical-normal) surface assumption.
         world_pt = unproject_depth_to_world((x1 + x2) / 2.0, float(y2), depth_map, cam, window=5)
         if world_pt is None:
             print("[!] Depth unproject returned no valid depth. Cannot place object.")
             return
-        support_z = float(world_pt[2])
-        pos_x, pos_y = float(world_pt[0]), float(world_pt[1])
-        print(f"Placement (fallback bbox-centre): support_z={support_z:.4f}")
+        support_point = np.asarray(world_pt, dtype=np.float64)
+        support_normal = np.array([0.0, 0.0, 1.0])
+        footprint_size = None
+        pos_x, pos_y = float(support_point[0]), float(support_point[1])
+        print(f"Placement (fallback bbox-centre): support_point={support_point}")
+
+    support_z = float(support_point[2])
+
+    # ── Surface-aligned rotation ─────────────────────────────────────────
+    # Minimal (no extra yaw) tilt that aligns the object's local up-axis
+    # with the fitted surface normal, so it rests flush on a ramp/slope
+    # instead of always standing perfectly vertical.
+    placement_rotation = compute_surface_alignment_rotation(support_normal)
+
+    # ── Robust scale: filtered-gaussian footprint, primarily ───────────
+    # See estimate_object_scale_robust() docstring: trusts the filtered
+    # gaussians' own footprint size first (computed above alongside the
+    # surface plane); the 2D-detection + depth back-projection is kept
+    # only as a logged cross-check, not blended in.
+    scale, scale_info = estimate_object_scale_robust(
+        footprint_size, target_extent, placement_mask, (x1, y1, x2, y2), support_point, cam,
+    )
+    print(f"Scale estimate: {scale_info}")
 
     translation = np.array([pos_x, pos_y, 0.0], dtype=np.float32)
 
@@ -1361,9 +1703,10 @@ def add_object_to_scene(
                 ply_path=mesh2splat_ply,
                 target_scale=float(scale),
                 scale_factor=0.4,
-                rotation=None,
+                rotation=placement_rotation,
                 translation=translation,
                 support_z=support_z,
+                support_plane=(support_point, support_normal),
             )
             print(f"Loaded {object_gaussians['means'].shape[0]:,} Gaussians from mesh2splat PLY.")
         else:
@@ -1385,9 +1728,10 @@ def add_object_to_scene(
                     num_gaussians=num_gaussians,
                     target_scale=float(scale),
                     scale_factor=0.4,
-                    rotation=None,
+                    rotation=placement_rotation,
                     translation=translation,
                     support_z=support_z,
+                    support_plane=(support_point, support_normal),
                     opacity_logit=5.0,
                     run_render_colmap=True,
                     work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),
@@ -1407,9 +1751,10 @@ def add_object_to_scene(
                     num_gaussians=num_gaussians,
                     target_scale=float(scale),
                     scale_factor=0.4,
-                    rotation=None,
+                    rotation=placement_rotation,
                     translation=translation,
                     support_z=support_z,
+                    support_plane=(support_point, support_normal),
                     opacity_logit=5.0,
                     run_render_colmap=False,
                     work_dir=os.path.join(SESSION_DIR, "glb_colmap_gs"),

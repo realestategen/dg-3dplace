@@ -15,6 +15,53 @@ from scipy.spatial.transform import Rotation as ScipyRotation
 
 C0 = 0.28209479177387814
 
+
+def _lift_to_support(
+    means: np.ndarray,
+    support_z: Optional[float],
+    support_plane: Optional[Tuple[np.ndarray, np.ndarray]],
+) -> np.ndarray:
+    """Vertically shift `means` (N,3) so the object's lowest point touches its
+    support surface exactly — no sinking, no floating.
+
+    Two modes:
+      support_plane=(point, normal) — slope-aware. The local plane height is
+        evaluated *underneath every Gaussian's own (x, y)*, not just at a
+        single global height. This is what makes placement correct on tilted
+        surfaces: a Gaussian on the downhill side of the object needs a
+        different "floor" height than one on the uphill side. The whole
+        object is then shifted in world-Z by the single worst-case (minimum)
+        clearance, so contact is exact at one point and the rest of the
+        object floats the correct, slope-consistent amount above the rest of
+        the surface (instead of using one flat height for everything).
+      support_z — flat-ground fallback (legacy behaviour): lift so the
+        single lowest Gaussian sits at a fixed height.
+    """
+    if means.size == 0:
+        return means
+
+    if support_plane is not None:
+        anchor, normal = support_plane
+        anchor = np.asarray(anchor, dtype=np.float64)
+        normal = np.asarray(normal, dtype=np.float64)
+        normal = normal / (np.linalg.norm(normal) + 1e-12)
+        if abs(normal[2]) > 1e-6:
+            # Plane: normal . (X - anchor) = 0  =>  z_plane(x,y) for any (x,y).
+            plane_z = anchor[2] - (
+                normal[0] * (means[:, 0] - anchor[0]) + normal[1] * (means[:, 1] - anchor[1])
+            ) / normal[2]
+            clearance = means[:, 2] - plane_z
+            shift = -float(clearance.min())
+            means[:, 2] += shift
+            return means
+        # Degenerate (near-vertical) normal — fall through to flat support_z.
+
+    if support_z is not None:
+        min_z = float(means[:, 2].min())
+        means[:, 2] += float(support_z - min_z)
+
+    return means
+
 # Coordinate conversion applied to all objects entering the scene.
 # GLB uses Y-up; the 3DGS scene uses Z-up.
 # Mapping: [X, Y, Z]_glb  →  [X, -Z, Y]_scene
@@ -30,6 +77,7 @@ def mesh2splat_ply_to_gaussians(
     rotation: Optional[np.ndarray] = None,
     translation: Optional[np.ndarray] = None,
     support_z: Optional[float] = None,
+    support_plane: Optional[Tuple[np.ndarray, np.ndarray]] = None,
 ) -> Dict[str, torch.Tensor]:
     """Load a mesh2splat-exported PLY and return a Gaussian dict ready for the scene.
 
@@ -49,7 +97,8 @@ def mesh2splat_ply_to_gaussians(
       3. Uniform scale to target_scale * scale_factor
       4. Optional placement rotation (conjugate-multiply onto quaternions)
       5. XY translation
-      6. support_z lift (min-Z Gaussian → support surface)
+      6. support lift — slope-aware plane (support_plane) if given, else a
+         flat min-Z-Gaussian lift to support_z
     """
     if not os.path.exists(ply_path):
         raise FileNotFoundError(f"mesh2splat PLY not found: {ply_path}")
@@ -102,10 +151,8 @@ def mesh2splat_ply_to_gaussians(
     if translation is not None:
         means = means + np.asarray(translation, dtype=np.float64)
 
-    # ── 6. support_z lift ────────────────────────────────────────────────
-    if support_z is not None and means.size > 0:
-        min_z = float(means[:, 2].min())
-        means[:, 2] += float(support_z - min_z)
+    # ── 6. support lift (slope-aware plane, or flat support_z fallback) ───
+    means = _lift_to_support(means, support_z, support_plane)
 
     features_dc   = torch.tensor(dc, dtype=torch.float32).unsqueeze(1)          # (N,1,3)
     features_rest = torch.tensor(rest.reshape(-1, 15, 3), dtype=torch.float32)  # (N,15,3)
@@ -679,6 +726,7 @@ def _apply_transform_to_gaussians(
     rotation: Optional[np.ndarray],
     translation: Optional[np.ndarray],
     support_z: Optional[float] = None,
+    support_plane: Optional[Tuple[np.ndarray, np.ndarray]] = None,
 ) -> Dict[str, torch.Tensor]:
     means = gs["means"].detach().cpu().numpy().astype(np.float32)
     scales = gs["scales"].detach().cpu().numpy().astype(np.float32)
@@ -702,12 +750,9 @@ def _apply_transform_to_gaussians(
     if translation is not None:
         means += np.asarray(translation, dtype=np.float32)
 
-    # If a support surface height is provided, lift the object so its
-    # lowest gaussian sits exactly at support_z (prevents sinking).
-    if support_z is not None and means.size > 0:
-        min_z = float(means[:, 2].min())
-        shift = float(support_z - min_z)
-        means[:, 2] += shift
+    # Lift the object onto its support surface (slope-aware plane if given,
+    # else a flat support_z) so it neither sinks into nor floats above it.
+    means = _lift_to_support(means, support_z, support_plane)
 
     out = dict(gs)
     out["means"] = torch.tensor(means, dtype=torch.float32)
@@ -737,6 +782,7 @@ def glb_to_gaussians(
     rotation: Optional[np.ndarray] = None,
     translation: Optional[np.ndarray] = None,
     support_z: Optional[float] = None,
+    support_plane: Optional[Tuple[np.ndarray, np.ndarray]] = None,
     opacity_logit: float = 5.0,
     run_render_colmap: bool = False,
     work_dir: Optional[str] = None,
@@ -793,6 +839,7 @@ def glb_to_gaussians(
             rotation=rotation,
             translation=translation,
             support_z=support_z,
+            support_plane=support_plane,
         )
 
         ops = transformed["opacities"]
@@ -825,11 +872,8 @@ def glb_to_gaussians(
     if translation is not None:
         pts_scene += np.asarray(translation, dtype=np.float32)
 
-    # Align object bottom to support surface if requested.
-    if support_z is not None and pts_scene.size > 0:
-        min_z = float(pts_scene[:, 2].min())
-        shift = float(support_z - min_z)
-        pts_scene[:, 2] += shift
+    # Align object bottom to support surface (slope-aware plane if given).
+    pts_scene = _lift_to_support(pts_scene, support_z, support_plane)
 
     means = torch.tensor(pts_scene, dtype=torch.float32)
 
