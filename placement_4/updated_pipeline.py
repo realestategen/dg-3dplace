@@ -71,7 +71,7 @@ generate_obj_from_prompt_image = _TWO_D_THREE_D_MODULE.generate_obj_from_prompt_
 generate_obj_from_cutout_image = _TWO_D_THREE_D_MODULE.generate_obj_from_cutout_image
 glb_to_gaussians, mesh2splat_ply_to_gaussians = _load_glb_to_gaussians()
 
-CKPT_PATH = "ckpt/bench_park.ckpt"
+CKPT_PATH = "ckpt/mando.ckpt"
 RENDER_W, RENDER_H = 1280, 720
 NUM_CAMERAS = 15
 FOV_DEG = 60.0
@@ -348,12 +348,63 @@ def save_depth_map_png(depth_map, output_path):
     return output_path
 
 
+def _largest_spatial_cluster(points, radius=None, min_neighbor_dist=0.005):
+    """Boolean mask selecting the largest spatially-contiguous cluster in
+    `points`, via graph connectivity (points within `radius` of each other
+    are linked; the largest connected component wins).
+
+    An infinite RANSAC plane has no notion of "nearby" — a point on the far
+    side of the room can satisfy the same plane equation purely by
+    coincidence (e.g. a wall point whose height/lateral offsets happen to
+    cancel out against the plane's slight tilt) without being anywhere near
+    the actual contiguous surface patch. This catches and removes exactly
+    that residual contamination after the RANSAC plane-inlier pass, using
+    only spatial proximity — no assumption about a single centroid, so it
+    works for elongated/curved support surfaces too.
+
+    `radius` defaults to ~4x the median nearest-neighbor spacing within
+    `points`, so it adapts to however dense/sparse the gaussian
+    reconstruction happens to be at this location.
+    """
+    from scipy.spatial import cKDTree
+    from scipy.sparse import coo_matrix
+    from scipy.sparse.csgraph import connected_components
+
+    n = len(points)
+    if n <= 2:
+        return np.ones(n, dtype=bool)
+
+    tree = cKDTree(points)
+    if radius is None:
+        nn_dist, _ = tree.query(points, k=2)
+        median_nn = float(np.median(np.maximum(nn_dist[:, 1], min_neighbor_dist)))
+        radius = max(4.0 * median_nn, 0.05)
+
+    pairs = tree.query_pairs(r=radius, output_type="ndarray")
+    if len(pairs) == 0:
+        # Nothing connects at all — degenerate; treat every point as its own
+        # singleton cluster and let the caller's size/fallback logic handle it.
+        return np.zeros(n, dtype=bool)
+
+    rows = np.concatenate([pairs[:, 0], pairs[:, 1]])
+    cols = np.concatenate([pairs[:, 1], pairs[:, 0]])
+    data = np.ones(len(rows), dtype=bool)
+    graph = coo_matrix((data, (rows, cols)), shape=(n, n))
+    n_components, labels = connected_components(graph, directed=False)
+    counts = np.bincount(labels, minlength=n_components)
+    largest_label = int(np.argmax(counts))
+    return labels == largest_label
+
+
 def select_object_gaussians_depth_aware(
     means, opacities, cam, depth_map, bbox,
     mask=None, opacity_threshold=OPACITY_THRESHOLD,
     depth_tol_abs=0.12, mad_k=3.0,
+    plane_dist_thresh=0.05, min_plane_inlier_frac=0.15, min_plane_inliers=8,
 ):
-    """Robustly select the 3D Gaussians that belong to the detected object.
+    """Robustly select the 3D Gaussians that the detected object actually
+    touches — i.e. its single real support surface, not every surface its
+    2D silhouette happens to overlap.
 
     Naively keeping every Gaussian whose 2D projection lands inside the
     detection bbox conflates the object with *any* other geometry sharing
@@ -364,7 +415,7 @@ def select_object_gaussians_depth_aware(
     object's bounding box/scale/center to balloon toward the background,
     which then corrupts initial placement and sizing.
 
-    This adds two depth-aware passes on top of the 2D footprint test:
+    This adds two passes on top of the 2D footprint test:
 
       1. Occlusion consistency — a candidate's own camera-space depth must
          match the depth actually rendered for the scene at its pixel
@@ -372,11 +423,27 @@ def select_object_gaussians_depth_aware(
          front-to-back, so it reflects the *visible* surface at that pixel.
          A gaussian sitting far behind that surface is, by construction,
          occluded in the real image and cannot be part of the visible
-         object — so it's dropped.
-      2. Robust depth-cluster filtering — among the survivors, a
-         median/MAD (median absolute deviation) filter rejects any residual
-         far-depth stragglers (handles blended or missing depth-map pixels
-         at silhouette edges, where pass 1 alone can be noisy).
+         object — so it's dropped (e.g. the far wall behind the bench).
+
+      2. Dominant-surface RANSAC clustering — occlusion consistency alone
+         is *not* enough: an object's silhouette can straddle several
+         independently, genuinely-visible real surfaces that are at
+         similar camera depth but different 3D position — e.g. a teddy
+         bear sitting on a bench, where its head overlaps a wall behind,
+         its dangling feet overlap the floor in front, and its body
+         overlaps the bench seat. All three are legitimately occlusion-
+         consistent at their own pixels (nothing is hidden there), so pass
+         1 cannot separate them — camera-space depth and "which physical
+         surface is this" are not the same thing. This pass fits a RANSAC
+         plane directly to the 3D positions of the pass-1 survivors and
+         keeps only the inliers of the plane with the most votes — the
+         single coherent surface the *majority* of the silhouette actually
+         touches (the bench seat, since it covers far more of the body
+         than the incidental floor/wall slivers at the silhouette edges).
+         Falls back to the previous median/MAD camera-depth filter only
+         when too few points survive to fit a reliable plane (e.g. a very
+         small/thin detection with no coherent contact surface, such as a
+         hanging picture frame against a wall).
 
     If a tight per-pixel object mask (e.g. from Gemini cutout matching) is
     available, it is used instead of the raw bbox to restrict candidates —
@@ -421,20 +488,49 @@ def select_object_gaussians_depth_aware(
     if stage1.size == 0:
         stage1 = cand  # depth map unreliable here; fall back to raw candidates
 
-    # Pass 2: robust median/MAD filter to drop residual far-depth outliers.
-    z1 = z[stage1]
-    med = float(np.median(z1))
-    mad = float(np.median(np.abs(z1 - med))) + 1e-6
-    keep = np.abs(z1 - med) < max(depth_tol_abs, mad_k * mad)
-    final = stage1[keep]
+    # Pass 2: dominant-surface RANSAC plane majority vote (3D-aware — see
+    # docstring point 2). Falls back to the median/MAD camera-depth filter
+    # only when there aren't enough points to fit a reliable plane.
+    min_inliers = max(min_plane_inliers, int(min_plane_inlier_frac * stage1.size))
+    plane = fit_plane_ransac(means[stage1], dist_thresh=plane_dist_thresh, min_inliers=min_inliers)
+
+    if plane is not None:
+        _, plane_normal, plane_inliers = plane
+        plane_idx = stage1[plane_inliers]
+        filter_method = "ransac_dominant_plane"
+
+        # Pass 2b: spatial-locality refinement — an infinite plane can admit
+        # a handful of unrelated points purely by equation coincidence (see
+        # _largest_spatial_cluster docstring); keep only the largest
+        # spatially-contiguous blob of inliers, which is the real surface.
+        spatial_keep = _largest_spatial_cluster(means[plane_idx])
+        if spatial_keep.sum() >= min_inliers:
+            final = plane_idx[spatial_keep]
+            filter_method = "ransac_dominant_plane+spatial_cluster"
+        else:
+            final = plane_idx  # spatial refinement degenerate; keep full plane-inlier set
+
+        plane_inlier_count = int(final.size)
+    else:
+        z1 = z[stage1]
+        med = float(np.median(z1))
+        mad = float(np.median(np.abs(z1 - med))) + 1e-6
+        keep = np.abs(z1 - med) < max(depth_tol_abs, mad_k * mad)
+        final = stage1[keep]
+        filter_method = "mad_depth_fallback"
+        plane_normal = None
+        plane_inlier_count = None
+
     if final.size == 0:
         final = stage1
+        filter_method += "+empty_fallback_to_stage1"
 
     info.update({
         "after_occlusion_filter": int(stage1.size),
         "final_count": int(final.size),
-        "median_depth": med,
-        "mad_depth": mad,
+        "filter_method": filter_method,
+        "plane_inlier_count": plane_inlier_count,
+        "plane_normal": plane_normal,
     })
     return final, info
 
@@ -1554,11 +1650,12 @@ def add_object_to_scene(
         f"Gaussians in {detection_label} bbox: {sel_info.get('raw_candidate_count', 0):,} candidates -> "
         f"{len(object_indices):,} after depth-aware filtering / {len(means):,} total"
     )
-    if sel_info.get("median_depth") is not None:
-        print(
-            f"  depth-aware selection: median_depth={sel_info['median_depth']:.4f}, "
-            f"mad_depth={sel_info['mad_depth']:.4f}, after_occlusion_filter={sel_info.get('after_occlusion_filter')}"
-        )
+    print(
+        f"  depth-aware selection: after_occlusion_filter={sel_info.get('after_occlusion_filter')}, "
+        f"filter_method={sel_info.get('filter_method')}, "
+        f"plane_inlier_count={sel_info.get('plane_inlier_count')}, "
+        f"plane_normal={sel_info.get('plane_normal')}"
+    )
 
     # 1. Save checkpoint with red-highlighted detected gaussians (for verification)
     C0 = 0.28209479177387814
