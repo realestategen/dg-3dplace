@@ -223,7 +223,7 @@ def run_refinement(ckpt_path, target_img_path, mask_path, scout_camera_data, out
         # ==========================================
         # [!] BOOSTED TILT PENALTY: Weight increased to 1.0 so the IoU loss cannot cheat by leaning the object!
         tilt_penalty = torch.abs(pose_model.rotation[1]) + torch.abs(pose_model.rotation[2])
-        z_penalty = torch.nn.functional.l1_loss(pose_model.translation[2], true_initial_center[2])
+        z_penalty = torch.nn.functional.l1_loss(pose_model.translation[2], true_initial_center[2] + 0.075)
         xy_penalty = torch.nn.functional.l1_loss(pose_model.translation[:2], true_initial_center[:2])
 
         total_loss = loss + (iou_loss * 2.0) + (tilt_penalty * 1.0) + (z_penalty * 1.0) + (xy_penalty * 1.0)
@@ -271,7 +271,7 @@ if __name__ == "__main__":
             target_img_path="data/inputs/diffusion_target.png",
             mask_path="data/inputs/object_mask.png",
             scout_camera_data=real_camera, 
-            output_path="data/outputs/scene_refined.ckpt"
+            output_path="data/outputs/scene_refined_bear.ckpt"
         )
     except Exception as e:
         import traceback
